@@ -173,7 +173,7 @@ with st.sidebar:
 |--------|------|------|
 | 广西甘蔗产量 | 广西统计年鉴 (2015-2024) | 年度 |
 | 气象数据 | tianqi24.com + Open-Meteo ERA5 (7市×10年) | 月度 |
-| FAO全球数据 | fao.org (中/泰/越) | 年度 |
+| FAO全球数据 | fao.org (中/泰/越/缅/老) | 年度 |
 | IPCC排放因子 | IPCC 2006 + 2019 Refinement | 不定期 |
 | 碳价数据 | 上海环境能源交易所 (日度) | 每日 |
 | 副产物系数 | 文献综述 (Andreae 2001等) | 按需 |
@@ -291,7 +291,7 @@ if not run_button:
 <div style="background:#FFF3E0;padding:1rem;border-radius:8px;border-top:3px solid #EF6C00;">
 <b>🌏 跨境投资者</b><br/><br/>
 <b>痛点</b>：东盟国家糖业数据分散，投资决策难<br/><br/>
-<b>价值</b>：中-泰-越三国数据协同对比，
+<b>价值</b>：中-泰-越-缅-老五国数据协同对比，
 支撑RCEP区域糖业投资决策<br/><br/>
 <b>场景</b>：中粮泰国、广西农垦越南项目
 </div>
