@@ -1,0 +1,43 @@
+{
+  "paths": {
+    "data_dir": "data",
+    "models_dir": "models"
+  },
+  "model": {
+    "n_estimators": 100,
+    "random_state": 42,
+    "test_size": 0.2,
+    "min_samples_for_training": 10
+  },
+  "optimization": {
+    "benefit_weight": 0.7,
+    "carbon_weight": 0.3
+  },
+  "fallback": {
+    "default_yield_per_mu_tons": 6.0
+  },
+  "processing_costs": {
+    "biomass_pellet_per_ton": 200,
+    "organic_fertilizer_per_ton": 150,
+    "deep_processed_per_ton": 500,
+    "landfill_per_ton": 100,
+    "boiler_fuel_per_ton": 50
+  },
+  "coal": {
+    "price_per_ton": 900,
+    "substitution_rate": 0.8
+  },
+  "diesel_emission": {
+    "co2_per_liter": 2.68,
+    "ch4_per_liter": 0.0002,
+    "n2o_per_liter": 0.0001
+  },
+  "default_cultivation": {
+    "fertilizer_n_kg_per_mu": 22,
+    "diesel_l_per_mu": 5,
+    "electricity_kwh_per_mu": 50,
+    "fertilizer_p2o5_kg_per_mu": 10,
+    "fertilizer_k2o_kg_per_mu": 18,
+    "_note": "广西甘蔗种植典型投入参数，来源：广西糖业协会2023年调研数据"
+  }
+}

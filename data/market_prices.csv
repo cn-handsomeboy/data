@@ -1,0 +1,55 @@
+country,product_name,price_min,price_max,price_avg_yuan_per_ton,currency,note
+China,sugarcane_procurement,510,540,540,yuan_per_ton,"广西糖料蔗收购价格(来源: 新华财经 2026-07-17; 2025/2026榨季540元/吨; 蔗农收入328亿元同比+20%)"
+Thailand,sugarcane_procurement,900,1100,1000,yuan_per_ton,"泰国甘蔗收购价(约120-130泰铢/吨, 按1:5汇率换算)"
+Vietnam,sugarcane_procurement,600,800,700,yuan_per_ton,"越南甘蔗收购价(约90-100万越南盾/吨, 按1:3500换算)"
+China,sugarcane_leaf,200,350,280,yuan_per_ton,蔗叶饲料化价格(来源: 广西甘蔗综合利用报道)
+Thailand,sugarcane_leaf,150,300,220,yuan_per_ton,泰国蔗叶饲料价格(估算)
+Vietnam,sugarcane_leaf,100,250,180,yuan_per_ton,越南蔗叶饲料价格(估算)
+China,biomass_pellet,300,500,400,yuan_per_ton,蔗叶生物质颗粒燃料价格(来源: 生物质能源网)
+Thailand,biomass_pellet,250,450,350,yuan_per_ton,泰国生物质颗粒价格(估算)
+Vietnam,biomass_pellet,200,400,300,yuan_per_ton,越南生物质颗粒价格(估算)
+China,bagasse,300,500,400,yuan_per_ton,蔗渣环保餐具原料价格(来源: 来宾蔗渣环保餐具出口基地)
+Thailand,bagasse,250,450,350,yuan_per_ton,泰国蔗渣价格(估算)
+Vietnam,bagasse,200,400,300,yuan_per_ton,越南蔗渣价格(估算)
+China,filter_mud,50,150,100,yuan_per_ton,滤泥有机肥化价格(来源: 广西糖蜜肥企业)
+Thailand,filter_mud,40,120,80,yuan_per_ton,泰国滤泥价格(估算)
+Vietnam,filter_mud,30,100,60,yuan_per_ton,越南滤泥价格(估算)
+China,organic_fertilizer,300,500,400,yuan_per_ton,滤泥制成有机肥销售价格(来源: 广西有机肥市场)
+Thailand,organic_fertilizer,250,450,350,yuan_per_ton,泰国有机肥价格(估算)
+Vietnam,organic_fertilizer,200,400,300,yuan_per_ton,越南有机肥价格(估算)
+China,molasses,800,1200,1000,yuan_per_ton,糖蜜价格(来源: 广西糖业协会)
+Thailand,molasses,600,1000,800,yuan_per_ton,泰国糖蜜价格(估算)
+Vietnam,molasses,500,900,700,yuan_per_ton,越南糖蜜价格(估算)
+China,molasses_direct,800,1200,1000,yuan_per_ton,糖蜜直接销售价格(来源: 广西糖业协会)
+Thailand,molasses_direct,600,1000,800,yuan_per_ton,泰国糖蜜直接销售价格(估算)
+Vietnam,molasses_direct,500,900,700,yuan_per_ton,越南糖蜜直接销售价格(估算)
+China,molasses_deep_processed,1500,2500,2000,yuan_per_ton,糖蜜深加工产品(甘蔗醋/酒精等)价格(来源: 崇左甘蔗醋产品)
+Thailand,molasses_deep_processed,1200,2200,1700,yuan_per_ton,泰国糖蜜深加工价格(估算)
+Vietnam,molasses_deep_processed,1000,2000,1500,yuan_per_ton,越南糖蜜深加工价格(估算)
+China,carbon_credit,72,92,80,yuan_per_ton,"全国碳市场CEA收盘价范围(来源: 上海环境能源交易所; 2026-07-22收盘91.03元/吨; 2026H1均价77.2元/吨)"
+Thailand,carbon_credit,40,60,50,yuan_per_ton,"泰国碳信用价格(估算, 参考国际自愿碳市场)"
+Vietnam,carbon_credit,30,50,40,yuan_per_ton,"越南碳信用价格(估算, 参考国际自愿碳市场)"
+China,bagasse_pulp_paper,500,800,650,yuan_per_ton,蔗渣造纸浆价格(来源: 来宾蔗渣环保餐具出口基地 广西日报2023)
+China,bagasse_tableware,1200,1800,1500,yuan_per_ton,"蔗渣环保浆料(来源: 广西兴桂纸业2024-蔗渣浆成本每吨降低466元; 众鑫股份招股书-蔗渣浆市价1000-2000元/吨; 加工成本800元/吨含制浆+清洗+能源)"
+Thailand,bagasse_tableware,900,1500,1200,yuan_per_ton,"泰国蔗渣餐具价格(估算, 参考泰国Green Packaging纸浆模塑出口价)"
+Vietnam,bagasse_tableware,800,1300,1050,yuan_per_ton,"越南蔗渣餐具价格(估算, 参考越南Duy Tan纸模塑出口价)"
+Thailand,bagasse_pulp_paper,400,700,550,yuan_per_ton,泰国蔗渣纸浆价格(估算)
+Vietnam,bagasse_pulp_paper,350,600,480,yuan_per_ton,越南蔗渣纸浆价格(估算)
+China,bagasse_plywood,400,600,500,yuan_per_ton,蔗渣刨花板/纤维板价格(来源: 广西人造板行业报价)
+Thailand,bagasse_plywood,350,500,420,yuan_per_ton,泰国蔗渣板材价格(估算)
+Vietnam,bagasse_plywood,300,450,380,yuan_per_ton,越南蔗渣板材价格(估算)
+China,bagasse_biogas,200,350,280,yuan_per_ton,蔗渣沼气能源化价格(来源: 生物质能源网)
+Thailand,bagasse_biogas,180,300,240,yuan_per_ton,泰国蔗渣沼气价格(估算)
+Vietnam,bagasse_biogas,150,250,200,yuan_per_ton,越南蔗渣沼气价格(估算)
+China,molasses_alcohol,2000,3500,2800,yuan_per_ton,糖蜜酒精价格(来源: 广西糖业协会 2023年酒精出厂价)
+Thailand,molasses_alcohol,1800,3000,2400,yuan_per_ton,"泰国糖蜜酒精价格(估算, 参考泰国Mitr Phol集团酒精出口价)"
+Vietnam,molasses_alcohol,1600,2800,2200,yuan_per_ton,"越南糖蜜酒精价格(估算, 参考越南Bien Hoa Sugar酒精出厂价)"
+China,molasses_yeast,3000,5000,4000,yuan_per_ton,糖蜜酵母/饲料蛋白价格(来源: 中国生物发酵产业协会)
+Thailand,molasses_yeast,2500,4200,3400,yuan_per_ton,"泰国糖蜜酵母价格(估算, 参考泰国Thai Roong Ruang酵母业务)"
+Vietnam,molasses_yeast,2200,3800,3000,yuan_per_ton,"越南糖蜜酵母价格(估算, 参考越南行业报告)"
+China,sugarcane_leaf_animal_feed,250,400,320,yuan_per_ton,蔗叶饲料化价格(来源: 广西畜牧站 蔗叶青贮饲料推广项目)
+Thailand,sugarcane_leaf_animal_feed,180,350,260,yuan_per_ton,泰国蔗叶饲料价格(估算)
+Vietnam,sugarcane_leaf_animal_feed,150,300,220,yuan_per_ton,越南蔗叶饲料价格(估算)
+China,sugarcane_top_animal_feed,200,350,280,yuan_per_ton,蔗梢饲料化价格(来源: 广西畜牧站)
+Thailand,sugarcane_top_animal_feed,150,280,220,yuan_per_ton,"泰国蔗梢饲料价格(估算, 参考泰国饲料协会)"
+Vietnam,sugarcane_top_animal_feed,130,250,190,yuan_per_ton,"越南蔗梢饲料价格(估算, 参考越南饲料协会)"
