@@ -131,8 +131,8 @@ with st.sidebar:
 
     st.markdown("---")
     country = st.selectbox(
-        "国家/地区", ["China", "Thailand", "Vietnam"],
-        format_func=lambda x: {"China": "中国-广西", "Thailand": "泰国", "Vietnam": "越南"}[x]
+        "国家/地区", ["China", "Thailand", "Vietnam", "Myanmar", "Laos"],
+        format_func=lambda x: {"China": "中国-广西", "Thailand": "泰国", "Vietnam": "越南", "Myanmar": "缅甸", "Laos": "老挝"}[x]
     )
     city = '崇左市'
     if country == 'China':

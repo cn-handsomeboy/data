@@ -414,8 +414,103 @@ def test_agent_regex():
     assert r.get('city') == '来宾市'
     print(f"[PASS] 10.6 城市识别 → {r.get('city')}")
 
+    # 10.7 缅甸/老挝识别
+    r = parse_query("缅甸甘蔗田")
+    assert r.get('country') == 'Myanmar'
+    print(f"[PASS] 10.7 '缅甸' → {r.get('country')}")
+
+    r = parse_query("老挝30亩")
+    assert r.get('country') == 'Laos'
+    assert r.get('area_mu') == 30
+    print(f"[PASS] 10.8 '老挝30亩' → country={r.get('country')}, area={r.get('area_mu')}")
+
     print()
 
+
+def test_myanmar_laos():
+    """测试 11: 缅甸/老挝跨境支持"""
+    print("=" * 60)
+    print("测试 11: 缅甸/老挝跨境支持")
+    print("=" * 60)
+
+    system = SugarcaneDecisionSystem()
+    system.yield_predictor.load_model()
+
+    # 11.1 缅甸
+    result = system.run_decision(
+        area_mu=10, avg_temp=28.0, precipitation=900, sunshine=870,
+        fertilizer_n_kg=220, diesel_l=50, electricity_kwh=500,
+        carbon_price=85, country='Myanmar', city='崇左市'
+    )
+    assert result.get('yield_source') == 'fao_statistical_average'
+    assert result['yield_per_mu'] > 0
+    print(f"[PASS] 11.1 Myanmar: yield={result['yield_per_mu']:.2f} (source={result.get('yield_source')})")
+
+    # 11.2 老挝
+    result = system.run_decision(
+        area_mu=10, avg_temp=28.0, precipitation=900, sunshine=870,
+        fertilizer_n_kg=220, diesel_l=50, electricity_kwh=500,
+        carbon_price=85, country='Laos', city='崇左市'
+    )
+    assert result.get('yield_source') == 'fao_statistical_average'
+    assert result['yield_per_mu'] > 0
+    print(f"[PASS] 11.2 Laos: yield={result['yield_per_mu']:.2f} (source={result.get('yield_source')})")
+
+    # 11.3 五国产量不同
+    countries = ['China', 'Thailand', 'Vietnam', 'Myanmar', 'Laos']
+    yields = {}
+    for c in countries:
+        r = system.run_decision(
+            area_mu=10, avg_temp=28.0, precipitation=900, sunshine=870,
+            fertilizer_n_kg=220, diesel_l=50, electricity_kwh=500,
+            carbon_price=85, country=c, city='崇左市'
+        )
+        yields[c] = r['yield_per_mu']
+        print(f"  {c}: {r['yield_per_mu']:.2f} 吨/亩, benefit={r['optimization']['optimal']['net_benefit']:,.0f} 元")
+
+    # 五国至少有3个不同产量
+    unique_yields = len(set([round(y, 1) for y in yields.values()]))
+    assert unique_yields >= 3, f"五国应有≥3种不同产量，实际{unique_yields}"
+    print(f"[PASS] 11.3 五国产量差异: {unique_yields}种不同产量")
+
+    print()
+
+
+def test_security_injection():
+    """测试 12: 安全性与异常注入"""
+    print("=" * 60)
+    print("测试 12: 安全性与异常注入")
+    print("=" * 60)
+
+    from agent import parse_query
+
+    # 12.1 SQL注入尝试（应安全处理）
+    r = parse_query("50亩'; DROP TABLE users;--")
+    assert r.get('area_mu') == 50
+    print("[PASS] 12.1 SQL注入尝试 → 安全解析")
+
+    # 12.2 超长输入
+    long_text = "甘蔗" * 1000 + "50亩"
+    r = parse_query(long_text)
+    assert r.get('area_mu') == 50
+    print("[PASS] 12.2 超长输入(2000+字) → 正常解析")
+
+    # 12.3 特殊字符
+    r = parse_query("50亩<script>alert('xss')</script>")
+    assert r.get('area_mu') == 50
+    print("[PASS] 12.3 XSS尝试 → 安全解析")
+
+    # 12.4 空输入
+    r = parse_query("")
+    assert isinstance(r, dict)
+    print("[PASS] 12.4 空输入 → 返回空字典")
+
+    # 12.5 只有数字无单位
+    r = parse_query("12345")
+    assert 'area_mu' not in r
+    print("[PASS] 12.5 无单位数字 → 不误解析为面积")
+
+    print()
 
 def run_all_tests():
     """运行所有测试"""
@@ -434,6 +529,8 @@ def run_all_tests():
         test_boundary_cases()
         test_api_imports()
         test_agent_regex()
+        test_myanmar_laos()
+        test_security_injection()
         
         print("=" * 60)
         print("[ALL PASS] 所有测试通过！")

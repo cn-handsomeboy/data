@@ -1213,7 +1213,7 @@ class SugarcaneDecisionSystem:
 
     跨境产量预测策略：
     - China: 使用基于广西气象-产量数据训练的回归模型
-    - Thailand/Vietnam: 使用FAO历史统计均值（吨/公顷→吨/亩换算）
+    - Thailand/Vietnam/Myanmar/Laos: 使用FAO历史统计均值（吨/公顷→吨/亩换算）
       因缺乏城市级气象-产量配对数据，采用FAO十年均值作为统计基准
     """
 
@@ -1238,7 +1238,7 @@ class SugarcaneDecisionSystem:
         try:
             fao = pd.read_csv(os.path.join(DATA_DIR, 'fao_global.csv'))
             baseline = {}
-            for country in ['China', 'Thailand', 'Vietnam']:
+            for country in ['China', 'Thailand', 'Vietnam', 'Myanmar', 'Laos']:
                 sub = fao[fao['country'] == country]
                 vals = sub['yield_per_ha_tons'].values * self.HA_TO_MU
                 baseline[country] = {
@@ -1254,7 +1254,7 @@ class SugarcaneDecisionSystem:
             return {k: v['mean'] for k, v in baseline.items()}
         except Exception as e:
             logger.warning("FAO数据加载失败: %s", e)
-            return {'China': 5.5, 'Thailand': 3.3, 'Vietnam': 4.0}
+            return {'China': 5.5, 'Thailand': 3.3, 'Vietnam': 4.0, 'Myanmar': 4.0, 'Laos': 3.0}
 
     def train_models(self, model_type: str = 'auto') -> dict:
         """训练所有模型，自动选择最优算法

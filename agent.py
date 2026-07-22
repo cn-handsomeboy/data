@@ -57,8 +57,9 @@ BYPRODUCT_CN = {
 
 COUNTRY_ALIASES = {
     '中国': 'China', '广西': 'China', '泰国': 'Thailand',
-    '越南': 'Vietnam', 'china': 'China', 'thailand': 'Thailand',
-    'vietnam': 'Vietnam',
+    '越南': 'Vietnam', '缅甸': 'Myanmar', '老挝': 'Laos',
+    'china': 'China', 'thailand': 'Thailand',
+    'vietnam': 'Vietnam', 'myanmar': 'Myanmar', 'laos': 'Laos',
 }
 
 
@@ -404,9 +405,9 @@ class SugarcaneAgent:
         return '、'.join(parts)
 
     def _cross_country_compare(self, params: dict, china_result: dict) -> str:
-        country_names = {'China': '中国', 'Thailand': '泰国', 'Vietnam': '越南'}
+        country_names = {'China': '中国', 'Thailand': '泰国', 'Vietnam': '越南', 'Myanmar': '缅甸', 'Laos': '老挝'}
         rows = []
-        for c in ['Thailand', 'Vietnam']:
+        for c in ['Thailand', 'Vietnam', 'Myanmar', 'Laos']:
             r = self.system.run_decision(
                 area_mu=params['area_mu'],
                 avg_temp=params['avg_temp'],

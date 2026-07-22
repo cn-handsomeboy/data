@@ -222,6 +222,16 @@ async def list_countries():
                 "name": "越南",
                 "description": "越南甘蔗产区",
             },
+            {
+                "code": "Myanmar",
+                "name": "缅甸",
+                "description": "缅甸甘蔗产区（FAO统计均值，数据质量B级）",
+            },
+            {
+                "code": "Laos",
+                "name": "老挝",
+                "description": "老挝甘蔗产区（FAO统计均值，数据质量B级）",
+            },
         ]
     }
 

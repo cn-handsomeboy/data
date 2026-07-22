@@ -13,6 +13,8 @@ natural_gas_combustion,kg_CO2_per_GJ,56.1,1,IPCC_2006,"IPCC 2006, Vol.2, Ch.2, T
 electricity_grid_China,kg_CO2_per_kWh,0.5703,1,China_MEE_2022,"中国生态环境部 2022年度中国电网排放因子 (2022年12月发布)"
 electricity_grid_Thailand,kg_CO2_per_kWh,0.4892,1,Thailand_EGAT_2022,"Thailand EGAT 2022 Grid Emission Factor (2022 Annual Report)"
 electricity_grid_Vietnam,kg_CO2_per_kWh,0.5238,1,Vietnam_MOIT_2022,"Vietnam MOIT 2022 Grid Emission Factor (Decision No.2726/QD-BCT)"
+electricity_grid_Myanmar,kg_CO2_per_kWh,0.4500,1,Myanmar_estimate,"Myanmar grid emission factor (估算, 基于IEA 2022 Myanmar Energy Outlook, 水电占比约60%)"
+electricity_grid_Laos,kg_CO2_per_kWh,0.3500,1,Laos_estimate,"Laos grid emission factor (估算, 基于IEA 2022 Laos Energy Statistics, 水电占比约70%)"
 bagasse_combustion,kg_CO2_per_GJ,0,1,IPCC_2006_biomass,"IPCC 2006, Vol.2, Ch.2: Biomass CO2 = 0 (carbon neutral)"
 sugarcane_burning_field,kg_CO2_per_ton_burned,1500,1,Literature_avg,"Andreae & Merlet (2001) Global Biogeochem. Cyc. 15(4):955-966; de Carvalho et al. (2019) J. Clean. Prod. 234:1234-1243"
 sugarcane_burning_field,kg_CH4_per_ton_burned,2.3,29.8,Literature_avg,"Andreae & Merlet (2001), Table 1; França et al. (2012) Atm. Env. 62:247-255; GWP updated to AR6 non-fossil"
