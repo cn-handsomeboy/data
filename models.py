@@ -96,6 +96,16 @@ def _safe_get(df, column, default=0.0):
     return float(df[column].values[0])
 
 
+def _safe_clone(model):
+    """安全克隆模型实例，处理 ElasticNetCV fit 后 alphas 被置 None 的问题"""
+    if not hasattr(model, 'get_params'):
+        return model.__class__()
+    params = model.get_params()
+    if hasattr(model, 'alpha_') and params.get('alphas') is None:
+        params['alphas'] = np.logspace(-4, 1, 50)
+    return model.__class__(**params)
+
+
 def _check_numeric(errors, name, value, low, high):
     """通用数值边界校验辅助函数（防御 NaN/None/非数值）"""
     if value is None:
@@ -381,10 +391,7 @@ class YieldPredictor:
             y_te = y.iloc[test_idx]
 
             # 对每个fold重新训练（使用最佳超参数重新实例化）
-            if hasattr(best_model, 'get_params'):
-                fold_model = best_model.__class__(**best_model.get_params())
-            else:
-                fold_model = best_model.__class__()
+            fold_model = _safe_clone(best_model)
             fold_model.fit(X_tr, y_tr)
             y_pred.append(fold_model.predict(X_te)[0])
             y_true.append(y_te.values[0])
@@ -562,7 +569,7 @@ class YieldPredictor:
             for train_idx, test_idx in rkf.split(X_final):
                 X_tr, X_te = X_final.iloc[train_idx], X_final.iloc[test_idx]
                 y_tr, y_te = y.iloc[train_idx], y.iloc[test_idx]
-                m = self.model.__class__(**self.model.get_params()) if hasattr(self.model, 'get_params') else self.model.__class__()
+                m = _safe_clone(self.model)
                 m.fit(X_tr, y_tr)
                 yp = m.predict(X_te)
                 rkf_scores.append(r2_score(y_te, yp))
@@ -940,8 +947,7 @@ class YieldPredictor:
             y_boot = self._y_train.iloc[idx]
 
             try:
-                m = self.model.__class__(**self.model.get_params()) if hasattr(
-                    self.model, 'get_params') else self.model.__class__()
+                m = _safe_clone(self.model)
                 m.fit(X_boot, y_boot)
 
                 # 构建预测特征（使用共享方法）
