@@ -111,6 +111,7 @@ agent = get_agent()
 # ============================================================
 with st.sidebar:
     st.markdown("### 🌱 参数设置")
+    st.caption("部署版本: 2026.08.17 · ElasticNetCV 修复版")
 
     # ---- 从 session_state 读取预置场景参数（需在控件使用前初始化） ----
     preset_area = st.session_state.pop('preset_area', 10.0)
