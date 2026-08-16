@@ -89,11 +89,15 @@ st.markdown(f"""
 # ============================================================
 @st.cache_resource(ttl=3600)  # 1小时缓存过期，确保模型更新后自动重载
 def get_system():
+    import sklearn
     s = SugarcaneDecisionSystem()
     try:
         s.train_models(model_type='auto')
     except Exception as e:
+        import traceback
+        err_detail = traceback.format_exc()
         st.warning(f"模型训练提示: {e}")
+        st.info(f"调试: sklearn={sklearn.__version__}, 错误类型={type(e).__name__}\n{err_detail[-500:]}")
     return s
 
 
