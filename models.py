@@ -60,6 +60,8 @@ if not logger.handlers:
 import warnings
 warnings.filterwarnings('ignore', message='.*does not have valid feature names.*')
 warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
+warnings.filterwarnings('ignore', message='.*alphas.*ElasticNetCV.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +504,8 @@ class YieldPredictor:
                 n_estimators=50, max_depth=3, learning_rate=0.05, random_state=42
             ),
             'elasticnet': ElasticNetCV(cv=5, random_state=42, max_iter=10000,
-                                       alphas=100, l1_ratio=[.1, .3, .5, .7, .9]),
+                                       alphas=np.logspace(-4, 1, 50),
+                                       l1_ratio=[.1, .3, .5, .7, .9]),
         }
         if HAS_XGBOOST:
             candidates['xgb'] = xgb.XGBRegressor(
