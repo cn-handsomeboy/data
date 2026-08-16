@@ -19,7 +19,7 @@ def main():
         area_mu=10,
         avg_temp=28.5,
         precipitation=2200,
-        sunshine=3500,
+        sunshine=900,
         fertilizer_n_kg=150,
         diesel_l=50,
         electricity_kwh=500,

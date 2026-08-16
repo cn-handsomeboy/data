@@ -11,6 +11,7 @@ REST API 数据产品接口
     python api.py
 """
 
+import hmac
 import json
 import os
 import sys
@@ -18,7 +19,7 @@ from datetime import datetime
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Depends, Security
+from fastapi import FastAPI, HTTPException, Query, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
@@ -26,20 +27,34 @@ from pydantic import BaseModel, Field
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(__file__))
 from models import SugarcaneDecisionSystem
+from data_security import (
+    AuditLogger, DataMasker, DataIntegrityChecker,
+    SecurityManager, get_security_status, InputValidator
+)
 
 # ---------------------------------------------------------------------------
 # API Key 鉴权
 # ---------------------------------------------------------------------------
-API_KEY = os.environ.get("SUGARCANE_API_KEY", "sczc-demo-key-2026")
+API_KEY = os.environ.get("SUGARCANE_API_KEY")
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
+if not API_KEY:
+    # 本地开发允许启动，但给出强警告；生产环境必须设置
+    import logging
+    logging.getLogger("api").warning(
+        "未设置 SUGARCANE_API_KEY 环境变量，使用随机临时密钥。"
+        "生产环境请务必设置强密钥！"
+    )
+    API_KEY = "dev-" + os.urandom(16).hex()
+
 
 async def verify_api_key(api_key: str = Security(api_key_header)):
-    """验证 API Key"""
+    """验证 API Key（使用恒定时间比较防御时序攻击）"""
     if api_key is None:
         raise HTTPException(status_code=401, detail="缺少 API Key，请在请求头中添加 X-API-Key")
-    if api_key != API_KEY:
+    # 防御时序攻击：hmac.compare_digest 不受输入长度差异影响
+    if not hmac.compare_digest(api_key, API_KEY):
         raise HTTPException(status_code=403, detail="API Key 无效")
     return api_key
 
@@ -52,35 +67,43 @@ app = FastAPI(
 
 ## 数据产品特性
 
-- **产量预测**：Ridge LOOCV，R²=0.862，7市×10年训练数据
+- **产量预测**：GBRT LOOCV，R²=0.893，7市×10年训练数据
 - **碳排放核算**：IPCC AR6 Tier 1，含N₂O 44/28转换，23条排放因子可溯源
-- **多目标优化**：经济收益70%+碳减排30%，三方案自动对比
-- **跨境对比**：中国-泰国-越南三国参数化决策
+- **多目标优化**：经济收益70%+碳减排30%，五方案自动对比（传统/改良传统/基础循环/进阶循环/最优循环）
+- **跨境对比**：中国-泰国-越南-缅甸-老挝五国参数化决策
 - **数据产品化**：对齐 GB/T 47950-2026《数据资产登记指南》、GB/T 46353-2025《数据资产价值评估》
 
 ## 鉴权方式
 
-在请求头中添加 `X-API-Key: sczc-demo-key-2026`
+在请求头中添加 `X-API-Key: <你的API密钥>`（通过环境变量 `SUGARCANE_API_KEY` 设置）
 
 ## 学术对标
 
 石杰锋等 (2023) 《智慧农业(中英文)》DOI: 10.12133/j.smartag.SA202304004
     """,
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    version="1.1.0",
+    docs_url="/docs" if os.environ.get("SCZC_ENABLE_DOCS", "true").lower() == "true" else None,
+    redoc_url="/redoc" if os.environ.get("SCZC_ENABLE_DOCS", "true").lower() == "true" else None,
     openapi_tags=[
         {"name": "数据产品", "description": "核心决策接口"},
         {"name": "系统", "description": "健康检查与系统信息"},
     ],
 )
 
-# CORS 跨域支持（允许其他系统调用）
+# CORS 跨域支持
+# 生产环境应通过 SCZC_CORS_ORIGINS 环境变量配置白名单，多个来源用逗号分隔
+# 例如：SCZC_CORS_ORIGINS=https://your-domain.com,https://admin.your-domain.com
+_default_origins = os.environ.get("SCZC_CORS_ORIGINS", "*")
+_allow_origins = [o.strip() for o in _default_origins.split(",") if o.strip()]
+# 安全加固：当 allow_origins 包含 * 时，禁止 allow_credentials=True
+_allow_credentials = False if "*" in _allow_origins else (
+    os.environ.get("SCZC_CORS_CREDENTIALS", "false").lower() == "true"
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_allow_origins,
+    allow_credentials=_allow_credentials,
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -88,6 +111,15 @@ app.add_middleware(
 import threading
 _system: Optional[SugarcaneDecisionSystem] = None
 _lock = threading.Lock()
+
+
+def _get_client_ip(request) -> str:
+    """获取真实客户端 IP，优先读取 X-Forwarded-For，但仅取第一个可信值"""
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        # 取第一个 IP，防止伪造链中追加的虚假 IP 被利用做日志欺骗
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "0.0.0.0"
 
 
 def get_system() -> SugarcaneDecisionSystem:
@@ -101,6 +133,13 @@ def get_system() -> SugarcaneDecisionSystem:
                     metrics = _system.train_models(model_type='auto')
                     print(f"[API] 模型训练完成，选择模型: {metrics.get('model_name', 'N/A')}, R²={metrics.get('r2', 'N/A')}")
                 except Exception as e:
+                    # 训练失败不阻断启动，使用 fallback 模型，但记录错误
+                    AuditLogger.log_security_event(
+                        event_type="model_load_failure",
+                        severity="HIGH",
+                        description="API 启动时模型训练失败，已回退到 fallback 模型",
+                        details={"error": str(e)},
+                    )
                     print(f"[API] 模型训练提示: {e}")
     return _system
 
@@ -113,8 +152,8 @@ class DecisionRequest(BaseModel):
     """决策请求参数"""
     country: str = Field(
         default="China",
-        description="国家（China/Thailand/Vietnam）",
-        examples=["China", "Thailand", "Vietnam"],
+        description="国家（China/Thailand/Vietnam/Myanmar/Laos）",
+        examples=["China", "Thailand", "Vietnam", "Myanmar", "Laos"],
     )
     city: str = Field(
         default="崇左市",
@@ -122,42 +161,42 @@ class DecisionRequest(BaseModel):
         examples=["崇左市", "来宾市", "南宁市", "柳州市"],
     )
     area_mu: float = Field(
-        default=10.0, ge=1.0, le=10000.0,
+        default=10.0, ge=0.0, le=100000.0,
         description="种植面积（亩）",
         examples=[10.0],
     )
     avg_temp: float = Field(
-        default=28.0, ge=15.0, le=35.0,
+        default=28.0, ge=10.0, le=45.0,
         description="生长季均温（℃）",
         examples=[28.0],
     )
     precipitation: float = Field(
-        default=900.0, ge=500.0, le=3000.0,
+        default=900.0, ge=0.0, le=5000.0,
         description="生长季累计降水（mm）",
         examples=[900.0],
     )
     sunshine: float = Field(
-        default=870.0, ge=500.0, le=2000.0,
+        default=870.0, ge=0.0, le=3000.0,
         description="生长季累计日照（h）",
         examples=[870.0],
     )
     fertilizer_n_kg: float = Field(
-        default=220.0, ge=0.0, le=5000.0,
-        description="氮肥用量（kg N）",
+        default=220.0, ge=0.0, le=22000000.0,
+        description="氮肥用量（kg N），模型内部按亩均 ≤220 kg N/亩 二次校验",
         examples=[220.0],
     )
     diesel_l: float = Field(
-        default=50.0, ge=0.0, le=1000.0,
-        description="柴油用量（L）",
+        default=50.0, ge=0.0, le=5000000.0,
+        description="柴油用量（L），模型内部按亩均 ≤50 L/亩 二次校验",
         examples=[50.0],
     )
     electricity_kwh: float = Field(
-        default=500.0, ge=0.0, le=2000.0,
-        description="用电量（kWh）",
+        default=500.0, ge=0.0, le=50000000.0,
+        description="用电量（kWh），模型内部按亩均 ≤500 kWh/亩 二次校验",
         examples=[500.0],
     )
     carbon_price: float = Field(
-        default=85.0, ge=0.0, le=500.0,
+        default=85.0, ge=0.0, le=10000.0,
         description="碳价（元/吨CO2），不传则使用近12月碳市场均价",
         examples=[85.0],
     )
@@ -197,7 +236,32 @@ async def health_check():
     return {
         "status": "ok",
         "service": "蔗循智策 API",
-        "version": "1.0.0",
+        "version": "1.1.0",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/security/status", tags=["系统"])
+async def security_status():
+    """
+    获取系统数据安全状态
+
+    返回数据完整性、分类分级、审计日志、跨境合规等安全体检结果。
+    """
+    return get_security_status()
+
+
+@app.post("/api/security/verify", tags=["系统"])
+async def verify_data_integrity():
+    """
+    手动触发数据完整性校验
+
+    重新计算所有数据文件SHA-256哈希，与记录值比对，检测篡改。
+    """
+    result = DataIntegrityChecker.verify_integrity()
+    return {
+        "message": "数据完整性校验完成",
+        "result": result,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -295,14 +359,37 @@ async def list_datasets():
 
 
 @app.post("/api/decision", tags=["数据产品"])
-async def run_decision(request: DecisionRequest, api_key: str = Depends(verify_api_key)):
+async def run_decision(
+    request: DecisionRequest,
+    api_key: str = Depends(verify_api_key),
+    req: Request = None
+):
     """
     运行决策，返回优化方案和数据产品
 
     这是核心数据产品接口，接收种植参数，返回最优方案、
     经济效益、碳排放等完整决策结果。
     """
+    import time
+    import uuid
+    start_time = time.time()
+    request_id = str(uuid.uuid4())
+    request_time = datetime.now().isoformat()
     system = get_system()
+    client_ip = _get_client_ip(req) if req is not None else "0.0.0.0"
+
+    # 输入安全校验（防御直接调用 Python API 时的非法入参）
+    try:
+        validated_city = InputValidator.validate_city(request.city)
+        validated_country = InputValidator.sanitize_string(request.country, max_length=50)
+    except ValueError as e:
+        AuditLogger.log_security_event(
+            event_type="input_validation_failure",
+            severity="MEDIUM",
+            description="决策接口输入校验失败",
+            details={"request_id": request_id, "error": str(e), "country": request.country},
+        )
+        raise HTTPException(status_code=400, detail=str(e))
 
     try:
         result = system.run_decision(
@@ -314,16 +401,48 @@ async def run_decision(request: DecisionRequest, api_key: str = Depends(verify_a
             diesel_l=request.diesel_l,
             electricity_kwh=request.electricity_kwh,
             carbon_price=request.carbon_price,
-            country=request.country,
-            city=request.city,
+            country=validated_country,
+            city=validated_city,
         )
+    except ValueError as e:
+        # 业务校验失败（如参数越界）返回 400
+        AuditLogger.log_security_event(
+            event_type="business_validation_failure",
+            severity="MEDIUM",
+            description="决策业务校验失败",
+            details={"request_id": request_id, "error": str(e), "country": request.country},
+        )
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"决策计算失败: {str(e)}")
+        # 审计日志：记录失败（不返回内部错误详情）
+        duration = (time.time() - start_time) * 1000
+        failure_params = request.model_dump()
+        failure_params["request_id"] = request_id
+        AuditLogger.log_api_access(
+            endpoint="/api/decision",
+            client_ip=client_ip,
+            api_key=api_key,
+            params=failure_params,
+            status_code=500,
+            response_size=0,
+            duration_ms=duration,
+            country=request.country,
+        )
+        # 安全加固：不将内部异常详情返回给客户端
+        AuditLogger.log_security_event(
+            event_type="decision_error",
+            severity="HIGH",
+            description="决策计算异常",
+            details={"request_id": request_id, "error": str(e), "country": request.country},
+        )
+        raise HTTPException(status_code=500, detail="决策计算失败，请检查输入参数或联系管理员")
 
-    # 方案名称映射
+    # 五方案名称映射
     scheme_name_cn = {
         "traditional": "传统模式",
+        "improved_traditional": "改良传统",
         "circular_basic": "基础循环",
+        "circular_advanced": "进阶循环",
         "circular_optimal": "最优循环",
     }
 
@@ -378,6 +497,8 @@ async def run_decision(request: DecisionRequest, api_key: str = Depends(verify_a
     # 数据产品元数据
     metadata = {
         "data_product_id": f"SCZC-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "request_id": request_id,
+        "request_time": request_time,
         "product_type": "决策支持数据产品",
         "update_frequency": "实时计算",
         "data_freshness": "气象数据至2024年，产量数据至2024年(7市×10年=70样本)，碳价数据近12月滚动更新",
@@ -395,43 +516,73 @@ async def run_decision(request: DecisionRequest, api_key: str = Depends(verify_a
             {"name": "FAO全球数据", "source": "FAOSTAT", "type": "国际组织数据"},
             {"name": "碳排放系数", "source": "IPCC 2006", "type": "国际标准"},
             {"name": "碳交易价格", "source": "上海环境能源交易所", "type": "政府开放数据"},
-            {"name": "市场价格", "source": "1688批发/行业研报/来宾工信局", "type": "市场数据"},
+            {"name": "市场价格", "source": "1688批发/行业研报/来宾工信局/FAO/东盟行业估算", "type": "市场数据"},
         ],
         "coverage": {
-            "region": "中国-广西（崇左/来宾/南宁/柳州/百色/河池/防城港）、泰国、越南",
+            "region": "中国-广西（崇左/来宾/南宁/柳州/百色/河池/防城港）、泰国、越南、缅甸、老挝",
             "time_range": "2015-2024",
+            "cross_border_framework": "RCEP农业数据合作 + 中国-东盟跨境产业对比",
         },
-        "disclaimer": "本数据产品仅供决策参考，不构成投资建议。跨境数据采用FAO统计均值，实际应用需结合当地实测数据校准。",
+        "disclaimer": "本数据产品仅供决策参考，不构成投资建议。跨境数据采用FAO统计均值与东盟市场估算，实际应用需结合当地实测数据校准。",
     }
 
+    # 构建响应
+    response_data = {
+        "timestamp": datetime.now().isoformat(),
+        "metadata": metadata,
+        "input": request.model_dump(),
+        "output": output,
+    }
+
+    # 审计日志：记录成功访问
+    duration = (time.time() - start_time) * 1000
+    response_size = len(json.dumps(response_data, ensure_ascii=False).encode('utf-8'))
+    audit_params = request.model_dump()
+    audit_params["request_id"] = request_id
+    AuditLogger.log_api_access(
+        endpoint="/api/decision",
+        client_ip=client_ip,
+        api_key=api_key,
+        params=audit_params,
+        status_code=200,
+        response_size=response_size,
+        duration_ms=duration,
+        country=request.country,
+    )
+
+    # 响应脱敏（隐藏内部细节）
+    masked_response = DataMasker.mask_api_response(response_data)
+
     return DecisionResponse(
-        timestamp=datetime.now().isoformat(),
-        metadata=metadata,
-        input=request.model_dump(),
-        output=output,
+        timestamp=masked_response["timestamp"],
+        metadata=masked_response["metadata"],
+        input=masked_response["input"],
+        output=masked_response["output"],
     )
 
 
 @app.get("/api/decision", tags=["数据产品"])
 async def run_decision_get(
+    api_key: str = Depends(verify_api_key),
+    req: Request = None,
     country: str = Query("China", description="国家"),
     city: str = Query("崇左市", description="广西城市"),
-    area_mu: float = Query(10.0, description="种植面积（亩）"),
-    avg_temp: float = Query(28.0, description="生长季均温（℃）"),
-    precipitation: float = Query(900.0, description="生长季累计降水（mm）"),
-    sunshine: float = Query(870.0, description="生长季累计日照（h）"),
-    fertilizer_n_kg: float = Query(220.0, description="氮肥用量（kg N）"),
-    diesel_l: float = Query(50.0, description="柴油用量（L）"),
-    electricity_kwh: float = Query(500.0, description="用电量（kWh）"),
-    carbon_price: float = Query(85.0, description="碳价（元/吨CO2）"),
+    area_mu: float = Query(10.0, ge=0.0, le=100000.0, description="种植面积（亩）"),
+    avg_temp: float = Query(28.0, ge=10.0, le=45.0, description="生长季均温（℃）"),
+    precipitation: float = Query(900.0, ge=0.0, le=5000.0, description="生长季累计降水（mm）"),
+    sunshine: float = Query(870.0, ge=0.0, le=3000.0, description="生长季累计日照（h）"),
+    fertilizer_n_kg: float = Query(220.0, ge=0.0, le=22000000.0, description="氮肥用量（kg N），按亩均 ≤220 kg N/亩 二次校验"),
+    diesel_l: float = Query(50.0, ge=0.0, le=5000000.0, description="柴油用量（L），按亩均 ≤50 L/亩 二次校验"),
+    electricity_kwh: float = Query(500.0, ge=0.0, le=50000000.0, description="用电量（kWh），按亩均 ≤500 kWh/亩 二次校验"),
+    carbon_price: float = Query(85.0, ge=0.0, le=10000.0, description="碳价（元/吨CO2）"),
 ):
     """
     通过 GET 请求运行决策（方便浏览器直接访问和 curl 测试）
 
     示例：
-        curl http://localhost:8000/api/decision?country=China&area_mu=10.0
+        curl -H "X-API-Key: $SUGARCANE_API_KEY" "http://localhost:8000/api/decision?country=China&area_mu=10.0"
     """
-    req = DecisionRequest(
+    request = DecisionRequest(
         country=country,
         city=city,
         area_mu=area_mu,
@@ -443,7 +594,170 @@ async def run_decision_get(
         electricity_kwh=electricity_kwh,
         carbon_price=carbon_price,
     )
-    return await run_decision(req)
+    return await run_decision(request=request, api_key=api_key, req=req)
+
+
+# ---------------------------------------------------------------------------
+# 三证一价与数据要素接口
+# ---------------------------------------------------------------------------
+
+@app.get("/api/certifications", tags=["数据要素"])
+async def get_certifications(api_key: str = Depends(verify_api_key)):
+    """
+    获取数据产品"三证一价"
+
+    返回数据资产登记证书、数据质量证书、数据安全证书、数据定价报告。
+    对标 GB/T 47950-2026《数据资产登记指南》、GB/T 46353-2025《数据资产价值评估》。
+    """
+    from data_product import DataProductCertification
+    cert = DataProductCertification()
+    return cert.get_all_certifications()
+
+
+@app.get("/api/certifications/{cert_type}", tags=["数据要素"])
+async def get_single_certificate(cert_type: str, api_key: str = Depends(verify_api_key)):
+    """
+    获取单张证书/报告
+
+    - registration: 数据资产登记证书
+    - quality: 数据质量证书
+    - security: 数据安全证书
+    - pricing: 数据定价报告
+    """
+    from data_product import DataProductCertification
+    cert = DataProductCertification()
+
+    if cert_type == "registration":
+        return cert.generate_registration_cert()
+    elif cert_type == "quality":
+        return cert.generate_quality_cert()
+    elif cert_type == "security":
+        return cert.generate_security_cert()
+    elif cert_type == "pricing":
+        return cert.generate_pricing_report()
+    else:
+        raise HTTPException(status_code=400, detail=f"不支持的证书类型: {cert_type}")
+
+
+@app.get("/api/lineage", tags=["数据要素"])
+async def get_data_lineage():
+    """
+    获取数据血缘信息（无需鉴权，公开透明）
+
+    返回数据从原始采集到最终产品服务的完整流转链路。
+    """
+    from data_product import get_lineage_data
+    nodes, links = get_lineage_data()
+    return {"nodes": nodes, "links": links}
+
+
+@app.get("/api/trading/scenarios", tags=["数据要素"])
+async def list_trading_scenarios():
+    """获取数据交易场景列表"""
+    from data_product import DataTradingSimulation
+    return {"scenarios": DataTradingSimulation.get_scenarios()}
+
+
+@app.get("/api/trading/simulate", tags=["数据要素"])
+async def simulate_trading(
+    scenario_id: str,
+    months: int = Query(12, ge=1, le=120, description="模拟月数（1-120）")
+):
+    """
+    模拟数据交易流水
+
+    - scenario_id: 场景ID（从 /api/trading/scenarios 获取）
+    - months: 模拟月数（默认12个月，上限120防止资源耗尽）
+    """
+    from data_product import DataTradingSimulation
+    result = DataTradingSimulation.simulate_transaction(scenario_id, months)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 用户验证闭环接口
+# ---------------------------------------------------------------------------
+
+class FeedbackRequest(BaseModel):
+    """用户反馈请求"""
+    predicted_yield: float = Field(..., description="系统预测单产（吨/亩）")
+    actual_yield: float = Field(..., description="实际单产（吨/亩）")
+    predicted_benefit: float = Field(..., description="系统预测净收益（元）")
+    actual_benefit: float = Field(..., description="实际净收益（元）")
+    city: str = Field(default="崇左市", description="城市")
+    country: str = Field(default="China", description="国家")
+    user_type: str = Field(default="其他", description="用户类型")
+    notes: str = Field(default="", description="备注")
+
+
+@app.post("/api/feedback", tags=["数据产品"])
+async def submit_feedback(
+    request: FeedbackRequest,
+    api_key: str = Depends(verify_api_key),
+    req: Request = None
+):
+    """
+    提交用户实际验证数据
+
+    实现预测→实际→偏差分析的验证闭环。系统自动计算产量和收益的偏差百分比。
+    """
+    from user_validation import FeedbackCollector
+    from data_security import InputValidator
+
+    client_ip = _get_client_ip(req) if req is not None else "0.0.0.0"
+
+    # 输入安全校验
+    try:
+        city = InputValidator.validate_city(request.city)
+        notes = InputValidator.sanitize_string(request.notes, max_length=500)
+        user_type = InputValidator.sanitize_string(request.user_type, max_length=50)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    fb = FeedbackCollector.submit_feedback(
+        predicted_yield=request.predicted_yield,
+        actual_yield=request.actual_yield,
+        predicted_benefit=request.predicted_benefit,
+        actual_benefit=request.actual_benefit,
+        city=city,
+        country=request.country,
+        user_type=user_type,
+        notes=notes,
+    )
+
+    AuditLogger.log_api_access(
+        endpoint="/api/feedback",
+        client_ip=client_ip,
+        api_key=api_key,
+        params={"city": city, "country": request.country},
+        status_code=200,
+        response_size=0,
+        duration_ms=0,
+        country=request.country,
+    )
+
+    return {
+        "message": "反馈提交成功",
+        "feedback": fb,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/validation/stats", tags=["数据产品"])
+async def get_validation_stats(api_key: str = Depends(verify_api_key)):
+    """
+    获取用户验证统计
+
+    返回累计验证数据集的统计指标，包括平均偏差、MAPE等。
+    """
+    from user_validation import FeedbackCollector
+    stats = FeedbackCollector.get_validation_stats()
+    return {
+        "stats": stats,
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -452,8 +766,9 @@ async def run_decision_get(
 if __name__ == "__main__":
     print("""
     ╔══════════════════════════════════════════════════════════╗
-    ║       蔗循智策 - 数据产品 API                           ║
+    ║       蔗循智策 - 数据产品 API v1.1.0                    ║
     ║       面向中国-东盟的甘蔗副产物循环经济决策系统          ║
+    ║       支持中国-泰国-越南-缅甸-老挝五国跨境决策          ║
     ╠══════════════════════════════════════════════════════════╣
     ║  API 文档: http://localhost:8000/docs                   ║
     ║  健康检查: http://localhost:8000/health                 ║

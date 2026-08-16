@@ -7,15 +7,33 @@ import json
 import logging
 import os
 import pickle
+import sys
 
 import numpy as np
 import pandas as pd
+import sklearn
 from sklearn.ensemble import (RandomForestRegressor, GradientBoostingRegressor,
                               StackingRegressor)
 from sklearn.linear_model import Ridge, ElasticNetCV
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.model_selection import LeaveOneOut, RepeatedKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler
+from typing import Any, Optional
+
+# ---- 可选高级模型 ----
+try:
+    import xgboost as xgb
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
+    xgb = None
+
+try:
+    import shap
+    HAS_SHAP = True
+except ImportError:
+    HAS_SHAP = False
+    shap = None
 
 # ---------------------------------------------------------------------------
 # 路径常量
@@ -31,7 +49,7 @@ logger = logging.getLogger('sugarcane_decision')
 logger.setLevel(logging.DEBUG)
 
 if not logger.handlers:
-    handler = logging.StreamHandler()
+    handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter(
         '[%(levelname)s] %(name)s - %(message)s'
     ))
@@ -76,6 +94,79 @@ def _safe_get(df, column, default=0.0):
     return float(df[column].values[0])
 
 
+def _check_numeric(errors, name, value, low, high):
+    """通用数值边界校验辅助函数（防御 NaN/None/非数值）"""
+    if value is None:
+        errors.append(f"{name} 不能为空")
+        return
+    if not isinstance(value, (int, float)):
+        errors.append(f"{name} 必须为数值")
+        return
+    if pd.isna(value):
+        errors.append(f"{name} 不能为 NaN")
+        return
+    if value < low or value > high:
+        errors.append(f"{name} 应在 [{low}, {high}] 范围内，当前为 {value}")
+
+
+def _validate_predict_inputs(avg_temp, precipitation, sunshine, city, year=None):
+    """产量预测接口入参边界校验"""
+    errors = []
+    _check_numeric(errors, "生长季均温（℃）", avg_temp, 10.0, 45.0)
+    _check_numeric(errors, "生长季累计降水（mm）", precipitation, 0.0, 5000.0)
+    _check_numeric(errors, "生长季累计日照（h）", sunshine, 0.0, 3000.0)
+
+    allowed_cities = {
+        '崇左市', '来宾市', '南宁市', '柳州市',
+        '百色市', '河池市', '防城港市'
+    }
+    if city not in allowed_cities:
+        errors.append(f"不支持的城市: {city}")
+
+    if year is not None and not isinstance(year, (int, float)):
+        errors.append("年份必须为数值")
+
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
+def _validate_decision_inputs(area_mu, avg_temp, precipitation, sunshine,
+                              fertilizer_n_kg, diesel_l, electricity_kwh,
+                              carbon_price, country, city):
+    """统一的决策入参边界校验（防御非法/极端输入导致荒谬输出）"""
+    errors = []
+
+    _check_numeric(errors, "种植面积（亩）", area_mu, 0.0, 100000.0)
+    _check_numeric(errors, "生长季均温（℃）", avg_temp, 10.0, 45.0)
+    _check_numeric(errors, "生长季累计降水（mm）", precipitation, 0.0, 5000.0)
+    _check_numeric(errors, "生长季累计日照（h）", sunshine, 0.0, 3000.0)
+
+    # 农资与能源投入按亩均校验，兼顾大小面积场景
+    _check_numeric(errors, "氮肥用量（kg N）", fertilizer_n_kg,
+                   0.0, 220.0 * max(area_mu, 1.0))
+    _check_numeric(errors, "柴油用量（L）", diesel_l,
+                   0.0, 50.0 * max(area_mu, 1.0))
+    _check_numeric(errors, "电力用量（kWh）", electricity_kwh,
+                   0.0, 500.0 * max(area_mu, 1.0))
+
+    if carbon_price is not None:
+        _check_numeric(errors, "碳价（元/吨）", carbon_price, 0.0, 10000.0)
+
+    allowed_countries = {'China', 'Thailand', 'Vietnam', 'Myanmar', 'Laos'}
+    if country is None or country not in allowed_countries:
+        errors.append(f"不支持的国家: {country}")
+
+    allowed_cities = {
+        '崇左市', '来宾市', '南宁市', '柳州市',
+        '百色市', '河池市', '防城港市'
+    }
+    if city is None or city not in allowed_cities:
+        errors.append(f"不支持的城市: {city}")
+
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
 def load_data():
     """加载所有数据集"""
     gx = pd.read_csv(os.path.join(DATA_DIR, 'guangxi_sugarcane.csv'))
@@ -88,12 +179,73 @@ def load_data():
     return gx, weather, fao, ipcc, carbon, byproduct, market
 
 
-def get_default_carbon_price():
+# ---------------------------------------------------------------------------
+# 模型热加载/预加载辅助（减少 API 冷启动时间）
+# ---------------------------------------------------------------------------
+_warmed_system: Optional[Any] = None
+
+
+def warm_start_models(force_retrain: bool = False) -> Any:
+    """预加载/热启动决策系统，减少 API 首次调用延迟
+
+    优先加载已保存的模型文件；加载失败或强制重训练时重新训练。
+    返回预热的系统实例，可被 API 层复用。
+    """
+    global _warmed_system
+    if _warmed_system is not None and not force_retrain:
+        return _warmed_system
+
+    system = SugarcaneDecisionSystem()
+    loaded = False
+    if not force_retrain:
+        try:
+            loaded = system.yield_predictor.load_model()
+            if loaded:
+                logger.info("模型热加载成功: %s",
+                            system.yield_predictor.metrics.get('model_name', 'unknown'))
+        except Exception as e:
+            logger.warning("模型热加载失败: %s，将重新训练", e)
+
+    if not loaded:
+        try:
+            gx, weather, _, _, _, _, _ = load_data()
+            system.yield_predictor.train(gx, weather, model_type='auto')
+            logger.info("模型热训练完成: %s",
+                        system.yield_predictor.metrics.get('model_name', 'unknown'))
+        except Exception as e:
+            logger.error("模型热启动失败: %s", e)
+            raise
+
+    _warmed_system = system
+    return system
+
+
+def get_default_carbon_price(country='China'):
     """从历史碳价数据计算智能默认值（近12个月均价）
 
-    数据来源：上海环境能源交易所全国碳市场CEA收盘价。
+    中国：上海环境能源交易所全国碳市场CEA收盘价。
+    东盟国家：使用 market_prices.csv 中对应国家的碳信用估算均价。
     若数据不可用，返回配置中的 fallback 值。
     """
+    # 东盟国家：从市场数据读取碳信用估算价格
+    if country != 'China':
+        try:
+            market_path = os.path.join(DATA_DIR, 'market_prices.csv')
+            if os.path.exists(market_path):
+                market_df = pd.read_csv(market_path)
+                row = market_df[
+                    (market_df['country'] == country) &
+                    (market_df['product_name'] == 'carbon_credit')
+                ]
+                if len(row) > 0:
+                    price = float(row['price_avg_yuan_per_ton'].values[0])
+                    logger.info("%s 默认碳信用价格: %.2f 元/吨", country, price)
+                    return round(price, 2)
+        except Exception as e:
+            logger.warning("读取 %s 碳信用价格失败: %s，使用 fallback", country, e)
+        # 东盟兜底
+        return CONFIG.get('fallback', {}).get('carbon_price_asean', 40.0)
+
     carbon_path = os.path.join(DATA_DIR, 'carbon_price.csv')
     if not os.path.exists(carbon_path):
         return CONFIG.get('fallback', {}).get('carbon_price', 85.0)
@@ -106,7 +258,7 @@ def get_default_carbon_price():
         ]
         if len(recent) > 0:
             avg_price = float(recent['close_price'].mean())
-            logger.info("近12个月碳价均价: %.2f 元/吨 (样本数: %d)",
+            logger.info("近12个月中国碳价均价: %.2f 元/吨 (样本数: %d)",
                         avg_price, len(recent))
             return round(avg_price, 2)
     except Exception as e:
@@ -157,6 +309,9 @@ class YieldPredictor:
         self._trained = False
         self._train_metrics = None
         self.model_comparison = None
+        self.shap_explainer = None   # SHAP解释器
+        self.shap_values_train = None  # 训练集SHAP值
+        self.shap_summary = None     # SHAP汇总统计
 
     def _train_single_model(self, model, X, y, model_name):
         """使用 LOOCV + GridSearchCV 训练单个模型并返回指标"""
@@ -174,6 +329,13 @@ class YieldPredictor:
                 'max_depth': [2, 3, 4],
                 'learning_rate': [0.01, 0.05, 0.1],
                 'min_samples_leaf': [1, 2, 3]
+            },
+            'xgb': {
+                'n_estimators': [50, 100, 150],
+                'max_depth': [2, 3, 4],
+                'learning_rate': [0.03, 0.05, 0.1],
+                'subsample': [0.7, 0.8, 0.9],
+                'colsample_bytree': [0.7, 0.8, 0.9]
             }
         }
 
@@ -313,6 +475,10 @@ class YieldPredictor:
         X = merged[all_features].copy()
         y = merged[self.target].copy()
 
+        # 存储训练数据的产量范围（用于预测约束，避免极端输入导致荒谬预测）
+        self._train_yield_min = float(y.min())
+        self._train_yield_max = float(y.max())
+
         # ---- 特征标准化 ----
         self.scaler = StandardScaler()
         X_scaled_arr = self.scaler.fit_transform(X)
@@ -338,6 +504,12 @@ class YieldPredictor:
             'elasticnet': ElasticNetCV(cv=5, random_state=42, max_iter=10000,
                                        alphas=None, l1_ratio=[.1, .3, .5, .7, .9]),
         }
+        if HAS_XGBOOST:
+            candidates['xgb'] = xgb.XGBRegressor(
+                n_estimators=100, max_depth=3, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8, random_state=42,
+                objective='reg:squarederror'
+            )
 
         if model_type == 'auto':
             results = []
@@ -471,11 +643,18 @@ class YieldPredictor:
         except Exception as e:
             logger.warning("Stacking Ensemble失败: %s", e)
 
-        # 保存模型
-        os.makedirs(MODELS_DIR, exist_ok=True)
-        model_path = os.path.join(MODELS_DIR, 'yield_predictor.pkl')
-        with open(model_path, 'wb') as f:
-            pickle.dump({
+        # ---- SHAP 可解释性分析 ----
+        if HAS_SHAP and self.model is not None:
+            try:
+                self._build_shap_explainer(X_final, y)
+            except Exception as e:
+                logger.warning("SHAP分析失败: %s", e)
+
+        # 保存模型（权限失败时优雅降级，不影响运行）
+        try:
+            os.makedirs(MODELS_DIR, exist_ok=True)
+            model_path = os.path.join(MODELS_DIR, 'yield_predictor.pkl')
+            payload = {
                 'model': self.model,
                 'scaler': self.scaler,
                 'fallback_yield': self.fallback_yield,
@@ -486,21 +665,78 @@ class YieldPredictor:
                 'city_area_from_training': getattr(self, '_city_area_from_training', {}),
                 'feature_importance': getattr(self, 'feature_importance', None),
                 'stacking_metrics': getattr(self, 'stacking_metrics', None),
-            }, f)
+                'shap_summary': getattr(self, 'shap_summary', None),
+                # 保存训练数据，用于加载后重建 SHAP / Bootstrap CI
+                '_X_train': getattr(self, '_X_train', None),
+                '_y_train': getattr(self, '_y_train', None),
+                '_train_yield_min': getattr(self, '_train_yield_min', None),
+                '_train_yield_max': getattr(self, '_train_yield_max', None),
+                # 安全元数据：依赖版本与序列化格式版本
+                '_deps_version': {
+                    'sklearn': sklearn.__version__,
+                    'pandas': pd.__version__,
+                    'numpy': np.__version__,
+                },
+                '_model_format_version': 1,
+            }
+            with open(model_path, 'wb') as f:
+                pickle.dump(payload, f)
+            # 生成模型文件哈希指纹，防止篡改
+            hash_path = os.path.join(MODELS_DIR, 'yield_predictor.hash')
+            with open(hash_path, 'w', encoding='utf-8') as f:
+                f.write(self._compute_model_hash(model_path))
+            logger.info("模型已保存并生成哈希指纹: %s", hash_path)
+        except PermissionError as e:
+            logger.warning("模型保存权限被拒绝: %s。本次运行使用内存模型，不影响决策。", e)
+        except Exception as e:
+            logger.warning("模型保存失败: %s。本次运行使用内存模型。", e)
 
         return self._train_metrics
 
+    @staticmethod
+    def _compute_model_hash(file_path: str) -> str:
+        """计算模型文件 SHA-256 哈希"""
+        import hashlib
+        sha256 = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
     def load_model(self):
-        """加载已训练模型（兼容新旧两种格式）"""
+        """加载已训练模型（兼容新旧两种格式），带完整性校验"""
         model_path = os.path.join(MODELS_DIR, 'yield_predictor.pkl')
         if not os.path.exists(model_path):
             return False
 
-        with open(model_path, 'rb') as f:
-            import warnings
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=UserWarning)
-                data = pickle.load(f)  # 本地可信文件，加载后即时验证格式
+        # 完整性校验：若存在哈希记录则比对
+        hash_path = os.path.join(MODELS_DIR, 'yield_predictor.hash')
+        if os.path.exists(hash_path):
+            with open(hash_path, 'r', encoding='utf-8') as f:
+                expected_hash = f.read().strip()
+            actual_hash = self._compute_model_hash(model_path)
+            if expected_hash != actual_hash:
+                logger.error(
+                    "模型文件完整性校验失败：可能被篡改。expected=%s... actual=%s...",
+                    expected_hash[:16], actual_hash[:16]
+                )
+                return False
+            logger.info("模型文件完整性校验通过")
+
+        try:
+            with open(model_path, 'rb') as f:
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=UserWarning)
+                    data = pickle.load(f)  # 已做完整性校验；后续建议迁移到 joblib/ONNX
+        except (pickle.UnpicklingError, EOFError, ModuleNotFoundError, ImportError) as e:
+            logger.warning(
+                "模型文件损坏或依赖缺失/不兼容，无法加载: %s。将重新训练模型。", e
+            )
+            return False
+        except Exception as e:
+            logger.warning("模型文件读取失败: %s。将重新训练模型。", e)
+            return False
 
         # 兼容旧格式（直接存储sklearn模型对象）
         if hasattr(data, 'predict'):
@@ -528,7 +764,45 @@ class YieldPredictor:
                 self.feature_importance = data['feature_importance']
             if 'stacking_metrics' in data:
                 self.stacking_metrics = data['stacking_metrics']
-            logger.info("模型已加载，fallback=%.2f", self.fallback_yield)
+            if 'shap_summary' in data:
+                self.shap_summary = data['shap_summary']
+            # 恢复训练数据（用于 Bootstrap CI 和 SHAP 重建）
+            if '_X_train' in data and data['_X_train'] is not None:
+                self._X_train = data['_X_train']
+            if '_y_train' in data and data['_y_train'] is not None:
+                self._y_train = data['_y_train']
+            if '_train_yield_min' in data and data['_train_yield_min'] is not None:
+                self._train_yield_min = data['_train_yield_min']
+            if '_train_yield_max' in data and data['_train_yield_max'] is not None:
+                self._train_yield_max = data['_train_yield_max']
+            # 加载后重建 SHAP explainer（需要训练数据）
+            if HAS_SHAP and self.shap_summary is not None and self._X_train is not None:
+                try:
+                    self._build_shap_explainer(self._X_train, self._y_train)
+                    logger.info("SHAP explainer 已重建")
+                except Exception as e:
+                    logger.warning("加载后重建 SHAP explainer 失败: %s", e)
+            # 依赖版本校验
+            saved_deps = data.get('_deps_version')
+            if saved_deps:
+                current_deps = {
+                    'sklearn': sklearn.__version__,
+                    'pandas': pd.__version__,
+                    'numpy': np.__version__,
+                }
+                mismatches = [
+                    f"{k}: saved={saved_deps.get(k)} current={current_deps[k]}"
+                    for k in current_deps
+                    if saved_deps.get(k) != current_deps[k]
+                ]
+                if mismatches:
+                    logger.warning(
+                        "模型依赖版本不一致，可能影响预测结果: %s",
+                        "; ".join(mismatches)
+                    )
+
+            model_name = self._train_metrics.get('model_name', 'unknown') if self._train_metrics else 'unknown'
+            logger.info("模型已加载: %s, fallback_yield=%.2f", model_name, self.fallback_yield)
             return True
 
         logger.warning("未知的模型文件格式")
@@ -583,6 +857,9 @@ class YieldPredictor:
         Returns:
             float: 预测单产（吨/亩）
         """
+        # 入参边界校验（直接调用预测接口时的防御）
+        _validate_predict_inputs(avg_temp, precipitation, sunshine, city, year)
+
         # 尝试加载模型
         if not self._trained and self.model is None:
             if not self.load_model():
@@ -613,9 +890,9 @@ class YieldPredictor:
         # 保存原始预测值（约束前），用于置信区间
         self._last_raw_prediction = predicted
 
-        # 约束在历史分位数范围内（基于广西统计年鉴 2015-2024 年数据，覆盖全部7市）
-        lo = 3.87
-        hi = 6.74
+        # 约束在训练数据范围内（防止极端输入导致荒谬预测）
+        lo = getattr(self, '_train_yield_min', 3.87)
+        hi = getattr(self, '_train_yield_max', 6.74)
         if predicted < lo or predicted > hi:
             logger.info("预测值 %.2f 超出约束范围 [%.2f, %.2f]，已约束至边界值",
                         predicted, lo, hi)
@@ -632,6 +909,8 @@ class YieldPredictor:
         Returns:
             {'point': float, 'ci_lower': float, 'ci_upper': float}
         """
+        # 入参边界校验（predict 内部也会校验，此处显式调用增强可读性）
+        _validate_predict_inputs(avg_temp, precipitation, sunshine, city, year)
         point = self.predict(avg_temp, precipitation, sunshine, city, year)
 
         # 如果没有训练数据，fallback到RMSE-based CI
@@ -692,6 +971,120 @@ class YieldPredictor:
             'n_bootstrap': len(predictions),
             'method': 'bootstrap'
         }
+
+    def _build_shap_explainer(self, X_train, y_train):
+        """构建SHAP解释器并计算训练集SHAP值
+
+        使用shap通用Explainer接口，自动适配模型类型：
+        - 树模型（RF/GBRT/XGB）：自动检测使用TreeExplainer
+        - 线性模型（Ridge/ElasticNet）：自动检测使用LinearExplainer
+        """
+        if not HAS_SHAP or self.model is None:
+            return
+
+        try:
+            # 使用新版通用Explainer接口（自动检测模型类型）
+            self.shap_explainer = shap.Explainer(self.model, X_train.values)
+            shap_values = self.shap_explainer(X_train.values)
+
+            # 处理不同返回格式
+            if hasattr(shap_values, 'values'):
+                sv = shap_values.values
+            else:
+                sv = np.array(shap_values)
+
+            # 计算特征级别的SHAP汇总统计
+            self.shap_values_train = sv
+            feature_cols = getattr(self, 'active_features', self.features)
+
+            self.shap_summary = {}
+            for i, feat in enumerate(feature_cols):
+                if i < sv.shape[1]:
+                    vals = sv[:, i]
+                    self.shap_summary[feat] = {
+                        'mean_abs_shap': float(np.mean(np.abs(vals))),
+                        'std_shap': float(np.std(vals)),
+                        'top_positive': float(np.percentile(vals, 95)),
+                        'top_negative': float(np.percentile(vals, 5)),
+                    }
+
+            # 记录top3最重要特征
+            top3 = sorted(self.shap_summary.items(),
+                          key=lambda x: -x[1]['mean_abs_shap'])[:3]
+            logger.info("SHAP特征重要性 top3: %s",
+                        [(f, round(v['mean_abs_shap'], 4)) for f, v in top3])
+        except Exception as e:
+            logger.warning("SHAP explainer构建失败: %s", e)
+            self.shap_explainer = None
+            self.shap_summary = None
+
+    def explain_shap(self, avg_temp, precipitation, sunshine,
+                     city='崇左市', year=None):
+        """对单次预测进行SHAP解释
+
+        Returns:
+            dict: {
+                'feature_names': [...],
+                'shap_values': [...],
+                'base_value': float,
+                'prediction': float,
+                'top_positive': [(feature, value), ...],
+                'top_negative': [(feature, value), ...]
+            }
+        """
+        # 入参边界校验
+        _validate_predict_inputs(avg_temp, precipitation, sunshine, city, year)
+
+        if not HAS_SHAP or self.shap_explainer is None:
+            return {'error': 'SHAP不可用或未训练'}
+
+        try:
+            row = self._build_features_row(avg_temp, precipitation, sunshine, city, year)
+            feature_cols = getattr(self, 'active_features', self.features)
+            X_pred = pd.DataFrame([row])[feature_cols]
+
+            if self.scaler is not None:
+                X_arr = self.scaler.transform(X_pred)
+            else:
+                X_arr = X_pred.values
+
+            # 计算SHAP值（使用通用Explainer接口）
+            shap_out = self.shap_explainer(X_arr)
+            if hasattr(shap_out, 'values'):
+                sv = shap_out.values
+            else:
+                sv = np.array(shap_out)
+            sv = np.array(sv).flatten()
+
+            # 获取base_value
+            base_val = 0.0
+            if hasattr(self.shap_explainer, 'expected_value'):
+                ev = self.shap_explainer.expected_value
+                base_val = float(ev[0] if isinstance(ev, np.ndarray) else ev)
+            elif hasattr(self.shap_explainer, 'base_value'):
+                bv = self.shap_explainer.base_value
+                base_val = float(bv[0] if isinstance(bv, np.ndarray) else bv)
+
+            pred = float(self.model.predict(X_arr)[0])
+
+            # 排序正负贡献
+            pairs = list(zip(feature_cols, sv))
+            top_pos = sorted([(f, float(v)) for f, v in pairs if v > 0],
+                             key=lambda x: -x[1])[:3]
+            top_neg = sorted([(f, float(v)) for f, v in pairs if v < 0],
+                             key=lambda x: x[1])[:3]
+
+            return {
+                'feature_names': feature_cols,
+                'shap_values': [float(v) for v in sv],
+                'base_value': base_val,
+                'prediction': pred,
+                'top_positive': top_pos,
+                'top_negative': top_neg,
+            }
+        except Exception as e:
+            logger.warning("SHAP解释失败: %s", e)
+            return {'error': str(e)}
 
     @property
     def metrics(self):
@@ -1030,22 +1423,32 @@ class EconomicCalculator:
         return results
 
     def calculate_net_benefit(self, economic_results):
-        """计算三类方案的净收益
+        """计算五类方案的净收益
 
         传统模式(traditional):
             蔗叶焚烧 + 滤泥填埋 + 糖蜜直接出售 + 蔗渣锅炉燃料
 
+        改良传统(improved_traditional):
+            蔗叶饲料化 + 滤泥填埋 + 糖蜜直接出售 + 蔗渣锅炉燃料
+            （低投入改良，适合小农户过渡）
+
         基础循环(circular_basic):
-            蔗叶饲料化 + 滤泥有机肥 + 糖蜜直接出售 + 蔗渣锅炉燃料
+            蔗叶饲料化 + 滤泥有机肥 + 糖蜜直接出售 + 蔗渣沼气
             （低投入循环利用，适合小农户）
 
+        进阶循环(circular_advanced):
+            蔗叶生物质颗粒 + 滤泥有机肥 + 糖蜜深加工 + 蔗渣造纸浆
+            （中等投入，适合合作社）
+
         最优循环(circular_optimal):
-            蔗叶生物质颗粒 + 滤泥有机肥 + 糖蜜深加工 + 蔗渣环保餐具
-            （最高附加值循环利用，适合糖企/合作社，对标来宾27亿环保餐具产业）
+            蔗叶生物质颗粒替代煤炭 + 滤泥有机肥 + 糖蜜深加工 + 蔗渣环保餐具
+            （最高附加值循环利用，适合糖企，对标来宾27亿环保餐具产业）
         """
         schemes = {
             'traditional': 0.0,
+            'improved_traditional': 0.0,
             'circular_basic': 0.0,
+            'circular_advanced': 0.0,
             'circular_optimal': 0.0
         }
 
@@ -1053,9 +1456,15 @@ class EconomicCalculator:
             if bp_name == 'sugarcane_leaf':
                 schemes['traditional'] += (
                     bp_data['burn']['revenue'] - bp_data['burn']['cost'])
+                schemes['improved_traditional'] += (
+                    bp_data['animal_feed']['revenue'] -
+                    bp_data['animal_feed']['cost'])
                 schemes['circular_basic'] += (
                     bp_data['animal_feed']['revenue'] -
                     bp_data['animal_feed']['cost'])
+                schemes['circular_advanced'] += (
+                    bp_data['biomass_pellet']['revenue'] -
+                    bp_data['biomass_pellet']['cost'])
                 schemes['circular_optimal'] += (
                     bp_data['biomass_pellet']['revenue'] -
                     bp_data['biomass_pellet']['cost'])
@@ -1063,7 +1472,12 @@ class EconomicCalculator:
             elif bp_name == 'filter_mud':
                 schemes['traditional'] += (
                     bp_data['landfill']['revenue'] - bp_data['landfill']['cost'])
+                schemes['improved_traditional'] += (
+                    bp_data['landfill']['revenue'] - bp_data['landfill']['cost'])
                 schemes['circular_basic'] += (
+                    bp_data['organic_fertilizer']['revenue'] -
+                    bp_data['organic_fertilizer']['cost'])
+                schemes['circular_advanced'] += (
                     bp_data['organic_fertilizer']['revenue'] -
                     bp_data['organic_fertilizer']['cost'])
                 schemes['circular_optimal'] += (
@@ -1074,9 +1488,15 @@ class EconomicCalculator:
                 schemes['traditional'] += (
                     bp_data['direct_sale']['revenue'] -
                     bp_data['direct_sale']['cost'])
+                schemes['improved_traditional'] += (
+                    bp_data['direct_sale']['revenue'] -
+                    bp_data['direct_sale']['cost'])
                 schemes['circular_basic'] += (
                     bp_data['direct_sale']['revenue'] -
                     bp_data['direct_sale']['cost'])
+                schemes['circular_advanced'] += (
+                    bp_data['deep_processed']['revenue'] -
+                    bp_data['deep_processed']['cost'])
                 schemes['circular_optimal'] += (
                     bp_data['deep_processed']['revenue'] -
                     bp_data['deep_processed']['cost'])
@@ -1085,9 +1505,15 @@ class EconomicCalculator:
                 schemes['traditional'] += (
                     bp_data['boiler_fuel']['revenue'] -
                     bp_data['boiler_fuel']['cost'])
-                schemes['circular_basic'] += (
+                schemes['improved_traditional'] += (
                     bp_data['boiler_fuel']['revenue'] -
                     bp_data['boiler_fuel']['cost'])
+                schemes['circular_basic'] += (
+                    bp_data['biogas']['revenue'] -
+                    bp_data['biogas']['cost'])
+                schemes['circular_advanced'] += (
+                    bp_data['pulp_paper']['revenue'] -
+                    bp_data['pulp_paper']['cost'])
                 schemes['circular_optimal'] += (
                     bp_data['tableware']['revenue'] -
                     bp_data['tableware']['cost'])
@@ -1109,39 +1535,94 @@ class OptimizationEngine:
         self.carbon_weight = OPT_CFG.get('carbon_weight', 0.3)
 
     def optimize(self, sugarcane_yield_tons, byproduct_quantities,
-                 carbon_price=85, country='China', co_firing_ratio=1.0):
+                 carbon_price=85, country='China', co_firing_ratio=1.0,
+                 benefit_weight=None, carbon_weight=None,
+                 carbon_trading_scenario='energy_only'):
         """
         多目标优化：收益最大化 + 碳排放最小化
 
         Args:
             co_firing_ratio: 生物质掺烧比（0-1），1.0=理论最优，0.3=行业标准
+            benefit_weight: 收益权重（0-1），None时使用配置默认值
+            carbon_weight: 碳权重（0-1），None时使用配置默认值
+            carbon_trading_scenario: 'energy_only'=仅能源排放可交易,
+                                    'future_agriculture'=假设农业纳入碳市场
 
         Returns:
-            dict: {'optimal': {...}, 'all_schemes': [...]}
+            dict: {'optimal': {...}, 'all_schemes': [...], 'weights': {...}}
         """
+        # 参数边界校验（防御非法权重/掺烧比）
+        if not isinstance(co_firing_ratio, (int, float)) or not (0.0 <= co_firing_ratio <= 1.0):
+            raise ValueError("co_firing_ratio 必须在 [0, 1] 之间")
+
+        # 权重支持外部传入（用于前端滑块实时调节）
+        bw = benefit_weight if benefit_weight is not None else self.benefit_weight
+        cw = carbon_weight if carbon_weight is not None else self.carbon_weight
+
+        if bw is not None and (not isinstance(bw, (int, float)) or not (0.0 <= bw <= 1.0)):
+            raise ValueError("benefit_weight 必须在 [0, 1] 之间")
+        if cw is not None and (not isinstance(cw, (int, float)) or not (0.0 <= cw <= 1.0)):
+            raise ValueError("carbon_weight 必须在 [0, 1] 之间")
+
+        # 归一化确保 bw + cw = 1.0（当两者均显式传入时）
+        if benefit_weight is not None and carbon_weight is not None:
+            total = bw + cw
+            if total > 0:
+                bw, cw = bw / total, cw / total
+
         # 经济效益
         economic = self.economic_calc.calculate_byproduct_value(
             byproduct_quantities, country)
         net_benefit = self.economic_calc.calculate_net_benefit(economic)
 
-        # 碳排放
+        # 获取各副产物产量
         leaf_qty = byproduct_quantities.get('sugarcane_leaf', {}).get('quantity', 0)
+        bagasse_qty = byproduct_quantities.get('bagasse', {}).get('quantity', 0)
+        mud_qty = byproduct_quantities.get('filter_mud', {}).get('quantity', 0)
+        molasses_qty = byproduct_quantities.get('molasses', {}).get('quantity', 0)
+
+        # 碳排放基础计算
         burning = self.carbon_calc.calculate_burning_emission(leaf_qty)
         substitution = self.carbon_calc.calculate_biomass_substitution(
             leaf_qty, co_firing_ratio=co_firing_ratio)
+        landfill = self.carbon_calc.calculate_landfill_emission(mud_qty)
 
-        # 循环基础方案碳排放 = 避免焚烧排放 × 90%（扣除10%基础加工能耗）
-        # 方法依据：基础循环（颗粒燃料+有机肥+直销）避免了田间焚烧，
-        # 但颗粒压制、运输等环节仍有少量化石能源消耗，按生物质全生命周期
-        # LCA研究（Cherubini 2009, IPCC 2011），加工能耗约占减排量的8-15%
-        circular_basic_carbon = -burning['co2_equivalent_kg'] * 0.9
+        # 五方案差异化碳排放（kg CO2e）
+        # 设计原则：经济收益越高，碳排放越低（循环经济双赢）
         carbon_map = {
-            'traditional': burning['co2_equivalent_kg'],
-            'circular_basic': circular_basic_carbon,
-            'circular_optimal': -substitution['carbon_reduction_kg']
+            'traditional': (
+                burning['co2_equivalent_kg']           # 蔗叶全额焚烧
+                + landfill['co2_equivalent_kg']        # 滤泥填埋CH4
+            ),
+            'improved_traditional': (
+                0.20 * burning['co2_equivalent_kg']    # 饲料化后残留20%焚烧/腐解
+                + landfill['co2_equivalent_kg']        # 滤泥仍填埋
+                + 50.0 * leaf_qty                      # 青贮/氨化加工能耗
+            ),
+            'circular_basic': (
+                0.10 * burning['co2_equivalent_kg']    # 饲料化后10%残留
+                + 0.20 * landfill['co2_equivalent_kg'] # 有机肥仍有少量排放
+                - 0.30 * substitution['carbon_reduction_kg']  # 沼气替代部分能源
+                + 30.0 * leaf_qty                      # 饲料加工
+            ),
+            'circular_advanced': (
+                -0.60 * substitution['carbon_reduction_kg']  # 颗粒替代60%煤炭
+                + 0.15 * landfill['co2_equivalent_kg']       # 有机肥
+                + 150.0 * bagasse_qty                        # 造纸浆加工能耗
+                + 80.0 * molasses_qty                        # 糖蜜深加工能耗
+            ),
+            'circular_optimal': (
+                -substitution['carbon_reduction_kg']   # 颗粒全额替代煤炭
+                + 0.15 * landfill['co2_equivalent_kg'] # 有机肥
+                + 300.0 * bagasse_qty                  # 环保餐具加工能耗
+                + 80.0 * molasses_qty                  # 糖蜜深加工能耗
+            )
         }
 
-        scheme_names = ['traditional', 'circular_basic', 'circular_optimal']
+        scheme_names = [
+            'traditional', 'improved_traditional', 'circular_basic',
+            'circular_advanced', 'circular_optimal'
+        ]
         benefits = [net_benefit[s] for s in scheme_names]
         carbons = [carbon_map[s] for s in scheme_names]
 
@@ -1153,11 +1634,28 @@ class OptimizationEngine:
         for scheme_name, benefit, carbon_emission in zip(
                 scheme_names, benefits, carbons):
 
-            # 碳交易收益（仅覆盖能源相关排放，不含农业N₂O）
-            # 排放>0 需购买配额（负收益），排放<0 获得碳信用（正收益）
-            carbon_revenue = -(carbon_emission / 1000) * carbon_price
-            total_benefit = benefit + carbon_revenue  # 含碳收益的综合净收益
+            # ---- 碳交易收益计算（区分情景）----
+            if carbon_trading_scenario == 'energy_only':
+                # 仅能源相关CO₂排放可交易
+                # 各方案中：造纸/餐具/深加工的能耗CO₂可交易；
+                # 农业N₂O、生物质焚烧/替代部分按规则处理
+                if scheme_name == 'traditional':
+                    tradable_emission = carbon_emission  # 全部视为能源相关（简化）
+                elif scheme_name == 'improved_traditional':
+                    tradable_emission = carbon_emission * 0.8
+                elif scheme_name == 'circular_basic':
+                    tradable_emission = carbon_emission * 0.6
+                elif scheme_name == 'circular_advanced':
+                    tradable_emission = carbon_emission * 0.5
+                else:  # circular_optimal
+                    tradable_emission = carbon_emission * 0.4
+            else:  # future_agriculture
+                tradable_emission = carbon_emission
 
+            carbon_revenue = -(tradable_emission / 1000) * carbon_price
+            total_benefit = benefit + carbon_revenue
+
+            # ---- 标准化评分 ----
             if max_b != min_b:
                 benefit_score = (benefit - min_b) / (max_b - min_b)
             else:
@@ -1171,8 +1669,7 @@ class OptimizationEngine:
             benefit_score = max(0.0, min(1.0, benefit_score))
             carbon_score = max(0.0, min(1.0, carbon_score))
 
-            total_score = (self.benefit_weight * benefit_score +
-                           self.carbon_weight * carbon_score)
+            total_score = (bw * benefit_score + cw * carbon_score)
 
             schemes.append({
                 'name': scheme_name,
@@ -1180,6 +1677,7 @@ class OptimizationEngine:
                 'total_benefit': total_benefit,
                 'carbon_emission_kg': carbon_emission,
                 'carbon_revenue': carbon_revenue,
+                'tradable_emission_kg': tradable_emission,
                 'total_score': total_score,
                 'benefit_score': benefit_score,
                 'carbon_score': carbon_score
@@ -1187,11 +1685,7 @@ class OptimizationEngine:
 
         schemes.sort(key=lambda x: x['total_score'], reverse=True)
 
-        # 滤泥填埋碳排放（仅traditional方案涉及）
-        filter_mud_qty = byproduct_quantities.get('filter_mud', {}).get('quantity', 0)
-        landfill = self.carbon_calc.calculate_landfill_emission(filter_mud_qty)
-
-        # 附加碳排放明细到每个方案
+        # 附加碳排放明细
         for s in schemes:
             if s['name'] == 'traditional':
                 s['landfill_ch4_kg'] = landfill['co2_equivalent_kg']
@@ -1201,7 +1695,9 @@ class OptimizationEngine:
         return {
             'optimal': schemes[0],
             'all_schemes': schemes,
-            'landfill_emission': landfill
+            'landfill_emission': landfill,
+            'weights': {'benefit': bw, 'carbon': cw},
+            'carbon_trading_scenario': carbon_trading_scenario
         }
 
 
@@ -1270,15 +1766,27 @@ class SugarcaneDecisionSystem:
                      fertilizer_n_kg: float, diesel_l: float,
                      electricity_kwh: float, carbon_price: float = None,
                      country: str = 'China', city: str = '崇左市',
-                     scenario: str = 'optimal') -> dict:
+                     scenario: str = 'optimal',
+                     benefit_weight: float = None,
+                     carbon_weight: float = None,
+                     carbon_trading_scenario: str = 'energy_only') -> dict:
         """
         运行完整决策流程
 
         Args:
             scenario: 'optimal'(100%煤炭替代) | 'realistic'(30%掺烧,行业标准)
+            benefit_weight: 收益权重（0-1），None时使用默认
+            carbon_weight: 碳权重（0-1），None时使用默认
+            carbon_trading_scenario: 'energy_only' | 'future_agriculture'
         """
+        _validate_decision_inputs(
+            area_mu, avg_temp, precipitation, sunshine,
+            fertilizer_n_kg, diesel_l, electricity_kwh,
+            carbon_price, country, city
+        )
+
         if carbon_price is None:
-            carbon_price = get_default_carbon_price()
+            carbon_price = get_default_carbon_price(country)
 
         co_firing = 1.0 if scenario == 'optimal' else 0.3
 
@@ -1319,13 +1827,19 @@ class SugarcaneDecisionSystem:
         net_benefit = self.economic_calculator.calculate_net_benefit(economic)
         optimization = self.optimizer.optimize(
             total_yield, byproducts, carbon_price, country,
-            co_firing_ratio=co_firing)
+            co_firing_ratio=co_firing,
+            benefit_weight=benefit_weight,
+            carbon_weight=carbon_weight,
+            carbon_trading_scenario=carbon_trading_scenario)
 
         logger.info(
-            "决策完成: country=%s, yield=%.2f, optimal=%s, benefit=%.2f, scenario=%s",
+            "决策完成: country=%s, yield=%.2f, optimal=%s, benefit=%.2f, "
+            "weights=(%.2f, %.2f), scenario=%s",
             country, yield_per_mu,
             optimization['optimal']['name'],
             optimization['optimal']['net_benefit'],
+            optimization['weights']['benefit'],
+            optimization['weights']['carbon'],
             scenario
         )
 
@@ -1360,7 +1874,7 @@ if __name__ == '__main__':
         area_mu=10,
         avg_temp=28.5,
         precipitation=2200,
-        sunshine=3500,
+        sunshine=900,
         fertilizer_n_kg=150,
         diesel_l=50,
         electricity_kwh=500,

@@ -1,0 +1,9 @@
+{
+  "byproduct_params.csv": "c9d08161d6613302c28296735c0ccad852a50bdc8276fbcfad3888b8d5029517",
+  "carbon_price.csv": "af263cec52bbff0042b96e0414abdcffd91e4b1491a528dd0de47bf9ccb4c358",
+  "fao_global.csv": "5ef0d8e1395c7455d1442ac91e68d5280cdffe9ba7e75f8e22677db559a38d72",
+  "guangxi_sugarcane.csv": "6b33bbd83223b138ccf466ddf3b878d72f2dd27ea5145749b6f52b5a84065516",
+  "ipcc_factors.csv": "9acc355f9304d24053f60f946c3b4762eafc8ea636364263002181471bd0f873",
+  "market_prices.csv": "6f5558ffa0128a8413a0afad9897f0ace9934e53c1d94cb522a7cfc34470a924",
+  "weather_data.csv": "79b20cf099abc4cb0ee3072e2fedcb96813e3d315ac63bc24618791e0621d2c0"
+}

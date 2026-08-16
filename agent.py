@@ -353,16 +353,23 @@ class SugarcaneAgent:
         params.setdefault('sunshine', 870.0)
         params.setdefault('carbon_price', self.default_carbon_price)
 
+        # 边界保护：防止用户输入超出模型可信范围
+        area_mu = max(0.01, min(float(params['area_mu']), 100000.0))
+        avg_temp = max(10.0, min(float(params['avg_temp']), 45.0))
+        precipitation = max(0.0, min(float(params['precipitation']), 5000.0))
+        sunshine = max(0.0, min(float(params['sunshine']), 3000.0))
+        carbon_price = max(0.0, min(float(params['carbon_price']), 10000.0))
+
         # 调用决策模型
         result = self.system.run_decision(
-            area_mu=params['area_mu'],
-            avg_temp=params['avg_temp'],
-            precipitation=params['precipitation'],
-            sunshine=params['sunshine'],
-            fertilizer_n_kg=FERTILIZER_N_PER_MU * params['area_mu'],
-            diesel_l=DIESEL_PER_MU * params['area_mu'],
-            electricity_kwh=ELECTRICITY_PER_MU * params['area_mu'],
-            carbon_price=params['carbon_price'],
+            area_mu=area_mu,
+            avg_temp=avg_temp,
+            precipitation=precipitation,
+            sunshine=sunshine,
+            fertilizer_n_kg=FERTILIZER_N_PER_MU * area_mu,
+            diesel_l=DIESEL_PER_MU * area_mu,
+            electricity_kwh=ELECTRICITY_PER_MU * area_mu,
+            carbon_price=carbon_price,
             country=params['country'],
             city=params['city'],
         )
@@ -407,17 +414,23 @@ class SugarcaneAgent:
     def _cross_country_compare(self, params: dict, china_result: dict) -> str:
         country_names = {'China': '中国', 'Thailand': '泰国', 'Vietnam': '越南', 'Myanmar': '缅甸', 'Laos': '老挝'}
         rows = []
+        area_mu = max(0.01, min(float(params.get('area_mu', 10.0)), 100000.0))
+        avg_temp = max(10.0, min(float(params.get('avg_temp', 28.0)), 45.0))
+        precipitation = max(0.0, min(float(params.get('precipitation', 900.0)), 5000.0))
+        sunshine = max(0.0, min(float(params.get('sunshine', 870.0)), 3000.0))
+        carbon_price = max(0.0, min(float(params.get('carbon_price', self.default_carbon_price)), 10000.0))
+        city = params.get('city', '崇左市')
         for c in ['Thailand', 'Vietnam', 'Myanmar', 'Laos']:
             r = self.system.run_decision(
-                area_mu=params['area_mu'],
-                avg_temp=params['avg_temp'],
-                precipitation=params['precipitation'],
-                sunshine=params['sunshine'],
-                fertilizer_n_kg=22 * params['area_mu'],
-                diesel_l=5 * params['area_mu'],
-                electricity_kwh=50 * params['area_mu'],
-                carbon_price=params['carbon_price'],
-                country=c, city=params['city'],
+                area_mu=area_mu,
+                avg_temp=avg_temp,
+                precipitation=precipitation,
+                sunshine=sunshine,
+                fertilizer_n_kg=22 * area_mu,
+                diesel_l=5 * area_mu,
+                electricity_kwh=50 * area_mu,
+                carbon_price=carbon_price,
+                country=c, city=city,
             )
             o = r['optimization']['optimal']
             src = r.get('yield_source', 'N/A')
@@ -469,15 +482,21 @@ class SugarcaneAgent:
         params.setdefault('sunshine', 870.0)
         params.setdefault('carbon_price', self.default_carbon_price)
 
+        area_mu = max(0.01, min(float(params['area_mu']), 100000.0))
+        avg_temp = max(10.0, min(float(params['avg_temp']), 45.0))
+        precipitation = max(0.0, min(float(params['precipitation']), 5000.0))
+        sunshine = max(0.0, min(float(params['sunshine']), 3000.0))
+        carbon_price = max(0.0, min(float(params['carbon_price']), 10000.0))
+
         result = self.system.run_decision(
-            area_mu=params['area_mu'],
-            avg_temp=params['avg_temp'],
-            precipitation=params['precipitation'],
-            sunshine=params['sunshine'],
-            fertilizer_n_kg=22 * params['area_mu'],
-            diesel_l=5 * params['area_mu'],
-            electricity_kwh=50 * params['area_mu'],
-            carbon_price=params['carbon_price'],
+            area_mu=area_mu,
+            avg_temp=avg_temp,
+            precipitation=precipitation,
+            sunshine=sunshine,
+            fertilizer_n_kg=22 * area_mu,
+            diesel_l=5 * area_mu,
+            electricity_kwh=50 * area_mu,
+            carbon_price=carbon_price,
             country=params['country'],
             city=params['city'],
             scenario='optimal'

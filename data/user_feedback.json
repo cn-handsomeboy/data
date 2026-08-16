@@ -1,0 +1,44 @@
+[
+  {
+    "id": "FB-20260731165044-001",
+    "timestamp": "2026-07-31T16:50:44.903566",
+    "city": "崇左市",
+    "country": "China",
+    "user_type": "其他",
+    "predicted_yield": 5.2,
+    "actual_yield": 5.0,
+    "yield_error_pct": -3.85,
+    "predicted_benefit": 55000.0,
+    "actual_benefit": 48000.0,
+    "benefit_error_pct": -12.73,
+    "notes": ""
+  },
+  {
+    "id": "FB-20260806004739-002",
+    "timestamp": "2026-08-06T00:47:39.204946",
+    "city": "崇左市",
+    "country": "China",
+    "user_type": "其他",
+    "predicted_yield": 5.2,
+    "actual_yield": 5.0,
+    "yield_error_pct": -3.85,
+    "predicted_benefit": 55000.0,
+    "actual_benefit": 50000.0,
+    "benefit_error_pct": -9.09,
+    "notes": ""
+  },
+  {
+    "id": "FB-20260806005732-003",
+    "timestamp": "2026-08-06T00:57:32.105726",
+    "city": "南宁市",
+    "country": "China",
+    "user_type": "其他",
+    "predicted_yield": 5.2,
+    "actual_yield": 5.599999999999998,
+    "yield_error_pct": 7.69,
+    "predicted_benefit": 55000.0,
+    "actual_benefit": 52000.0,
+    "benefit_error_pct": -5.45,
+    "notes": ""
+  }
+]

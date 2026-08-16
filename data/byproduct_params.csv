@@ -1,19 +1,19 @@
 byproduct_name,production_coefficient_tons_per_ton_cane,utilization_method,energy_content_MJ_per_ton,carbon_content_kg_per_ton,moisture_content_percent,source
-sugarcane_leaf,0.18,field_burning,15000,450,15,literature_avg
-sugarcane_leaf,0.18,return_to_field,15000,450,15,literature_avg
-sugarcane_leaf,0.18,biomass_pellet,16000,480,12,literature_avg
-sugarcane_leaf,0.18,animal_feed,14000,420,18,literature_avg
-bagasse,0.24,boiler_fuel,18000,500,48,industry_standard_24pct_wet
-bagasse,0.24,pulp_paper,17000,480,50,industry_standard_24pct_wet
-bagasse,0.24,plywood,17500,490,48,industry_standard_24pct_wet
-bagasse,0.24,biogas,16000,450,50,industry_standard_24pct_wet
-filter_mud,0.04,landfill,5000,200,75,literature_avg
-filter_mud,0.04,organic_fertilizer,5500,220,70,literature_avg
-filter_mud,0.04,brick_material,6000,250,65,literature_avg
-molasses,0.035,direct_sale,12000,380,25,literature_avg
-molasses,0.035,alcohol_production,13000,400,22,literature_avg
-molasses,0.035,yeast_production,12500,390,24,literature_avg
-molasses,0.035,animal_feed,11500,370,26,literature_avg
-sugarcane_top,0.08,field_burning,14000,420,20,literature_avg
-sugarcane_top,0.08,return_to_field,14000,420,20,literature_avg
-sugarcane_top,0.08,animal_feed,13500,400,22,literature_avg
+sugarcane_leaf,0.18,field_burning,15000,450,15,"Leal et al. (2013) Biomass Bioenerg. 53:11-19; 广西甘蔗综合利用技术规范"
+sugarcane_leaf,0.18,return_to_field,15000,450,15,"Leal et al. (2013) Biomass Bioenerg. 53:11-19; 广西甘蔗综合利用技术规范"
+sugarcane_leaf,0.18,biomass_pellet,16000,480,12,"Leal et al. (2013) Biomass Bioenerg. 53:11-19; McKendry (2002) Bioresour. Technol. 83:37-46"
+sugarcane_leaf,0.18,animal_feed,14000,420,18,"Leal et al. (2013) Biomass Bioenerg. 53:11-19; 广西畜牧站蔗叶青贮饲料推广项目"
+bagasse,0.24,boiler_fuel,18000,500,48,"Rein (2007) Cane Sugar Engineering, Ch.12; Chen & Chou (1993) Cane Sugar Handbook 12th ed."
+bagasse,0.24,pulp_paper,17000,480,50,"Rein (2007) Cane Sugar Engineering, Ch.12; 来宾蔗渣环保餐具出口基地(广西日报 2023)"
+bagasse,0.24,plywood,17500,490,48,"Rein (2007) Cane Sugar Engineering, Ch.12; 广西人造板行业报价"
+bagasse,0.24,biogas,16000,450,50,"Rein (2007) Cane Sugar Engineering, Ch.12; McKendry (2002) Bioresour. Technol. 83:37-46"
+filter_mud,0.04,landfill,5000,200,75,"Solomon (2011) Sugar Tech 13(4):408-416; IPCC 2006 Vol.5 Ch.3"
+filter_mud,0.04,organic_fertilizer,5500,220,70,"Solomon (2011) Sugar Tech 13(4):408-416; Prado et al. (2013) Appl. Environ. Soil Sci. 2013:581984"
+filter_mud,0.04,brick_material,6000,250,65,"Solomon (2011) Sugar Tech 13(4):408-416; 广西糖蜜肥企业调研数据"
+molasses,0.035,direct_sale,12000,380,25,"Chen & Chou (1993) Cane Sugar Handbook 12th ed., Ch.32; 广西糖业协会"
+molasses,0.035,alcohol_production,13000,400,22,"Chen & Chou (1993) Cane Sugar Handbook 12th ed., Ch.32; 广西糖业协会 2023年酒精出厂价"
+molasses,0.035,yeast_production,12500,390,24,"Chen & Chou (1993) Cane Sugar Handbook 12th ed., Ch.32; 安琪酵母崇左基地"
+molasses,0.035,animal_feed,11500,370,26,"Chen & Chou (1993) Cane Sugar Handbook 12th ed., Ch.32; 中国生物发酵产业协会"
+sugarcane_top,0.08,field_burning,14000,420,20,"广西甘蔗综合利用技术规范; 中国糖业协会行业标准"
+sugarcane_top,0.08,return_to_field,14000,420,20,"广西甘蔗综合利用技术规范; 中国糖业协会行业标准"
+sugarcane_top,0.08,animal_feed,13500,400,22,"广西甘蔗综合利用技术规范; 广西畜牧站蔗梢青贮饲料推广项目"
