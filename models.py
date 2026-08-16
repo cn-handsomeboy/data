@@ -502,7 +502,7 @@ class YieldPredictor:
                 n_estimators=50, max_depth=3, learning_rate=0.05, random_state=42
             ),
             'elasticnet': ElasticNetCV(cv=5, random_state=42, max_iter=10000,
-                                       alphas=None, l1_ratio=[.1, .3, .5, .7, .9]),
+                                       alphas=100, l1_ratio=[.1, .3, .5, .7, .9]),
         }
         if HAS_XGBOOST:
             candidates['xgb'] = xgb.XGBRegressor(
