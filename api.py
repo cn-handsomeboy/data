@@ -123,24 +123,36 @@ def _get_client_ip(request) -> str:
 
 
 def get_system() -> SugarcaneDecisionSystem:
-    """获取或初始化决策系统实例（线程安全）"""
+    """获取或初始化决策系统实例（线程安全）
+
+    优先热加载已保存的模型文件（warm_start_models 内部逻辑）：
+    - 本地/生产已有 models/yield_predictor.pkl → 直接加载，秒级启动
+    - 无模型文件或加载失败 → 快速重训练（精简后约2秒，70样本×2模型LOOCV）
+    避免在请求线程内做完整训练导致首请求超时。
+    """
     global _system
     if _system is None:
         with _lock:
             if _system is None:  # 双重检查锁定
-                _system = SugarcaneDecisionSystem()
+                from models import warm_start_models
                 try:
-                    metrics = _system.train_models(model_type='auto')
-                    print(f"[API] 模型训练完成，选择模型: {metrics.get('model_name', 'N/A')}, R²={metrics.get('r2', 'N/A')}")
+                    _system = warm_start_models()
+                    metrics = _system.yield_predictor.metrics or {}
+                    src = '热加载' if _system.yield_predictor.model is not None and \
+                        not metrics.get('fallback', True) else '重训练'
+                    print(f"[API] 决策系统就绪（{src}）: "
+                          f"{metrics.get('model_name', 'N/A')}, "
+                          f"R²={metrics.get('r2', 'N/A')}")
                 except Exception as e:
                     # 训练失败不阻断启动，使用 fallback 模型，但记录错误
                     AuditLogger.log_security_event(
                         event_type="model_load_failure",
                         severity="HIGH",
-                        description="API 启动时模型训练失败，已回退到 fallback 模型",
+                        description="API 启动时模型加载/训练失败，已回退到 fallback 模型",
                         details={"error": str(e)},
                     )
-                    print(f"[API] 模型训练提示: {e}")
+                    print(f"[API] 模型加载提示: {e}")
+                    _system = SugarcaneDecisionSystem()
     return _system
 
 
@@ -315,10 +327,10 @@ async def list_datasets():
             },
             {
                 "name": "fao_global",
-                "description": "中国-东盟三国甘蔗生产对比数据",
+                "description": "中国-东盟五国甘蔗生产对比数据",
                 "source": "FAOSTAT",
                 "years": "2015-2024",
-                "countries": ["China", "Thailand", "Vietnam"],
+                "countries": ["China", "Thailand", "Vietnam", "Myanmar", "Laos"],
                 "type": "国际组织开放数据",
             },
             {
@@ -350,8 +362,8 @@ async def list_datasets():
             },
             {
                 "name": "market_prices",
-                "description": "中-泰-越三国副产物市场价格（30+条，含环保浆料真实产业数据）",
-                "source": "1688批发/行业研报/来宾工信局",
+                "description": "中-泰-越-缅-老五国副产物市场价格（90条，含环保浆料真实产业数据；东盟条目为估算并已标注）",
+                "source": "1688批发/行业研报/来宾工信局/FAO/东盟行业估算",
                 "type": "市场数据",
             },
         ]

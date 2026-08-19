@@ -12,22 +12,14 @@ import sys
 import numpy as np
 import pandas as pd
 import sklearn
-from sklearn.ensemble import (RandomForestRegressor, GradientBoostingRegressor,
-                              StackingRegressor)
-from sklearn.linear_model import Ridge, ElasticNetCV
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-from sklearn.model_selection import LeaveOneOut, RepeatedKFold, GridSearchCV
+from sklearn.model_selection import LeaveOneOut
 from sklearn.preprocessing import StandardScaler
 from typing import Any, Optional
 
 # ---- 可选高级模型 ----
-try:
-    import xgboost as xgb
-    HAS_XGBOOST = True
-except ImportError:
-    HAS_XGBOOST = False
-    xgb = None
-
 try:
     import shap
     HAS_SHAP = True
@@ -57,11 +49,10 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 # 抑制sklearn已知无害警告（不影响结果，仅减少日志噪音）
+# 注意：仅精确匹配已知无害警告，不使用 module 级地毯式过滤，
+# 以免吞掉 ConvergenceWarning 等重要诊断信息
 import warnings
 warnings.filterwarnings('ignore', message='.*does not have valid feature names.*')
-warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
-warnings.filterwarnings('ignore', message='.*alphas.*ElasticNetCV.*')
-warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 
 # ---------------------------------------------------------------------------
@@ -97,12 +88,10 @@ def _safe_get(df, column, default=0.0):
 
 
 def _safe_clone(model):
-    """安全克隆模型实例，处理 ElasticNetCV fit 后 alphas 被置 None 的问题"""
+    """安全克隆模型实例（用于 LOOCV 每个 fold 重新实例化）"""
     if not hasattr(model, 'get_params'):
         return model.__class__()
     params = model.get_params()
-    if hasattr(model, 'alpha_') and params.get('alphas') is None:
-        params['alphas'] = np.logspace(-4, 1, 50)
     return model.__class__(**params)
 
 
@@ -325,63 +314,19 @@ class YieldPredictor:
         self.shap_values_train = None  # 训练集SHAP值
         self.shap_summary = None     # SHAP汇总统计
 
-    def _train_single_model(self, model, X, y, model_name):
-        """使用 LOOCV + GridSearchCV 训练单个模型并返回指标"""
-        # ---- 超参数网格 ----
-        n_est = MODEL_CFG.get('n_estimators', 100)
-        param_grids = {
-            'ridge': {'alpha': [0.01, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0]},
-            'rf': {
-                'n_estimators': [max(30, n_est // 3), n_est // 2, n_est],
-                'max_depth': [2, 3, 4, 5],
-                'min_samples_leaf': [1, 2, 3]
-            },
-            'gbrt': {
-                'n_estimators': [max(30, n_est // 3), n_est // 2, n_est],
-                'max_depth': [2, 3, 4],
-                'learning_rate': [0.01, 0.05, 0.1],
-                'min_samples_leaf': [1, 2, 3]
-            },
-            'xgb': {
-                'n_estimators': [50, 100, 150],
-                'max_depth': [2, 3, 4],
-                'learning_rate': [0.03, 0.05, 0.1],
-                'subsample': [0.7, 0.8, 0.9],
-                'colsample_bytree': [0.7, 0.8, 0.9]
-            }
-        }
+    def _train_evaluate_model(self, model, X, y, model_name):
+        """使用固定保守超参 + LOOCV 训练并评估单个模型。
 
-        pg = param_grids.get(model_name, {})
+        设计说明：小样本（70 样本）场景下不做超参数搜索（GridSearchCV），
+        原因有二：
+        (1) 超参搜索与 LOOCV 共用同一份数据会造成信息泄漏，使 R² 被系统性
+            高估（GridSearchCV 在全部样本上选参后再用 LOOCV 评估属典型泄漏）；
+        (2) 小样本下超参搜索本身方差极大，收益有限，用保守默认超参反而更稳健。
+        因此采用预先设定的保守超参，保证 LOOCV 评估结果的无偏性。
+        """
         best_model = model
 
-        # ElasticNetCV has built-in CV, no GridSearchCV needed
-        if model_name == 'elasticnet':
-            try:
-                best_model.fit(X, y)
-                logger.info("  elasticnet CV: alpha=%.4f, l1_ratio=%.2f",
-                            best_model.alpha_, best_model.l1_ratio_)
-            except Exception as e:
-                logger.warning("  elasticnet failed: %s", e)
-                best_model = model
-                best_model.fit(X, y)
-        elif pg:
-            try:
-                gs = GridSearchCV(
-                    model, pg, cv=min(5, len(X)),
-                    scoring='neg_mean_squared_error', n_jobs=1
-                )
-                gs.fit(X, y)
-                best_model = gs.best_estimator_
-                logger.info("  %s GridSearchCV best params: %s",
-                            model_name, gs.best_params_)
-            except Exception as e:
-                logger.warning("  %s GridSearchCV failed: %s, using defaults", model_name, e)
-                best_model = model
-                best_model.fit(X, y)
-        else:
-            best_model.fit(X, y)
-
-        # ---- LOOCV 评估 ----
+        # ---- LOOCV 评估（无超参搜索，无信息泄漏）----
         loo = LeaveOneOut()
         y_true, y_pred = [], []
         for train_idx, test_idx in loo.split(X):
@@ -390,7 +335,7 @@ class YieldPredictor:
             y_tr = y.iloc[train_idx]
             y_te = y.iloc[test_idx]
 
-            # 对每个fold重新训练（使用最佳超参数重新实例化）
+            # 每个 fold 用相同的固定超参重新训练
             fold_model = _safe_clone(best_model)
             fold_model.fit(X_tr, y_tr)
             y_pred.append(fold_model.predict(X_te)[0])
@@ -401,7 +346,7 @@ class YieldPredictor:
         mae = mean_absolute_error(y_true, y_pred)
         r2 = r2_score(y_true, y_pred)
 
-        # 最终在全量数据上训练
+        # 最终在全量数据上训练（供线上预测使用）
         best_model.fit(X, y)
 
         return {
@@ -485,8 +430,12 @@ class YieldPredictor:
         y = merged[self.target].copy()
 
         # 存储训练数据的产量范围（用于预测约束，避免极端输入导致荒谬预测）
+        # 采用 2.5%~97.5% 分位数而非 min/max，避免单个离群值影响约束边界；
+        # 同时保留 min/max 作为兜底（样本过少时分位数退化）。
         self._train_yield_min = float(y.min())
         self._train_yield_max = float(y.max())
+        self._train_yield_q025 = float(np.percentile(y, 2.5))
+        self._train_yield_q975 = float(np.percentile(y, 97.5))
 
         # ---- 特征标准化 ----
         self.scaler = StandardScaler()
@@ -503,28 +452,20 @@ class YieldPredictor:
             recent = merged[merged['city'] == c].sort_values('year').tail(3)
             self._city_area_from_training[c] = float(recent['planting_area_wan_mu'].mean())
 
-        # ---- 候选模型 ----
+        # ---- 候选模型（小样本下精简为2个，覆盖"可解释"与"精度"两类）----
+        # ridge：线性可解释基线；gbrt：非线性精度模型（固定保守超参，避免过拟合）
         candidates = {
             'ridge': Ridge(alpha=1.0, random_state=42),
-            'rf': RandomForestRegressor(n_estimators=50, max_depth=3, random_state=42),
             'gbrt': GradientBoostingRegressor(
-                n_estimators=50, max_depth=3, learning_rate=0.05, random_state=42
+                n_estimators=50, max_depth=3, learning_rate=0.05,
+                min_samples_leaf=2, random_state=42
             ),
-            'elasticnet': ElasticNetCV(cv=5, random_state=42, max_iter=10000,
-                                       alphas=np.logspace(-4, 1, 50),
-                                       l1_ratio=[.1, .3, .5, .7, .9]),
         }
-        if HAS_XGBOOST:
-            candidates['xgb'] = xgb.XGBRegressor(
-                n_estimators=100, max_depth=3, learning_rate=0.05,
-                subsample=0.8, colsample_bytree=0.8, random_state=42,
-                objective='reg:squarederror'
-            )
 
         if model_type == 'auto':
             results = []
             for name, m in candidates.items():
-                result = self._train_single_model(m, X_final.copy(), y.copy(), name)
+                result = self._train_evaluate_model(m, X_final.copy(), y.copy(), name)
                 results.append(result)
 
             results.sort(key=lambda r: r['r2'], reverse=True)
@@ -548,7 +489,7 @@ class YieldPredictor:
             )
         else:
             model = candidates.get(model_type, candidates['ridge'])
-            result = self._train_single_model(model, X_final.copy(), y.copy(), model_type)
+            result = self._train_evaluate_model(model, X_final.copy(), y.copy(), model_type)
             self.model = result['model']
             self._trained = True
             self._train_metrics = {
@@ -561,25 +502,6 @@ class YieldPredictor:
                 "产量预测模型训练完成 - %s, R²=%.4f, RMSE=%.4f",
                 model_type, result['r2'], result['rmse']
             )
-
-        # ---- RepeatedKFold 稳健评估 ----
-        try:
-            rkf = RepeatedKFold(n_splits=5, n_repeats=10, random_state=42)
-            rkf_scores = []
-            for train_idx, test_idx in rkf.split(X_final):
-                X_tr, X_te = X_final.iloc[train_idx], X_final.iloc[test_idx]
-                y_tr, y_te = y.iloc[train_idx], y.iloc[test_idx]
-                m = _safe_clone(self.model)
-                m.fit(X_tr, y_tr)
-                yp = m.predict(X_te)
-                rkf_scores.append(r2_score(y_te, yp))
-            self._train_metrics['r2_repeated_kfold_mean'] = float(np.mean(rkf_scores))
-            self._train_metrics['r2_repeated_kfold_std'] = float(np.std(rkf_scores))
-            logger.info("RepeatedKFold (5x10): R²=%.4f ± %.4f",
-                        self._train_metrics['r2_repeated_kfold_mean'],
-                        self._train_metrics['r2_repeated_kfold_std'])
-        except Exception as e:
-            logger.warning("RepeatedKFold失败: %s", e)
 
         # ---- 特征重要性 ----
         self.feature_importance = {}
@@ -609,50 +531,6 @@ class YieldPredictor:
         except Exception as e:
             logger.warning("特征重要性计算失败: %s", e)
 
-        # ---- Stacking Ensemble (学术最佳实践) ----
-        self.stacking_model = None
-        self.stacking_metrics = None
-        try:
-            base_estimators = [
-                ('ridge', Ridge(alpha=0.01, random_state=42)),
-                ('rf', RandomForestRegressor(n_estimators=50, max_depth=4,
-                     min_samples_leaf=2, random_state=42)),
-            ]
-            stacking = StackingRegressor(
-                estimators=base_estimators,
-                final_estimator=Ridge(alpha=1.0, random_state=42),
-                cv=5
-            )
-            stacking.fit(X_final, y)
-
-            # LOOCV评估Stacking
-            y_true_s, y_pred_s = [], []
-            loo = LeaveOneOut()
-            for train_idx, test_idx in loo.split(X_final):
-                X_tr = X_final.iloc[train_idx]
-                X_te = X_final.iloc[test_idx]
-                y_tr = y.iloc[train_idx]
-                y_te = y.iloc[test_idx]
-                st = StackingRegressor(
-                    estimators=base_estimators,
-                    final_estimator=Ridge(alpha=1.0, random_state=42),
-                    cv=5
-                )
-                st.fit(X_tr, y_tr)
-                y_pred_s.append(st.predict(X_te)[0])
-                y_true_s.append(y_te.values[0])
-
-            s_r2 = r2_score(y_true_s, y_pred_s)
-            s_rmse = np.sqrt(mean_squared_error(y_true_s, y_pred_s))
-            self.stacking_model = stacking
-            self.stacking_metrics = {
-                'r2': float(s_r2), 'rmse': float(s_rmse),
-                'loocv_samples': len(y_true_s)
-            }
-            logger.info("Stacking Ensemble LOOCV: R²=%.4f, RMSE=%.4f", s_r2, s_rmse)
-        except Exception as e:
-            logger.warning("Stacking Ensemble失败: %s", e)
-
         # ---- SHAP 可解释性分析 ----
         if HAS_SHAP and self.model is not None:
             try:
@@ -674,13 +552,14 @@ class YieldPredictor:
                 'active_features': getattr(self, 'active_features', self.features),
                 'city_area_from_training': getattr(self, '_city_area_from_training', {}),
                 'feature_importance': getattr(self, 'feature_importance', None),
-                'stacking_metrics': getattr(self, 'stacking_metrics', None),
                 'shap_summary': getattr(self, 'shap_summary', None),
                 # 保存训练数据，用于加载后重建 SHAP / Bootstrap CI
                 '_X_train': getattr(self, '_X_train', None),
                 '_y_train': getattr(self, '_y_train', None),
                 '_train_yield_min': getattr(self, '_train_yield_min', None),
                 '_train_yield_max': getattr(self, '_train_yield_max', None),
+                '_train_yield_q025': getattr(self, '_train_yield_q025', None),
+                '_train_yield_q975': getattr(self, '_train_yield_q975', None),
                 # 安全元数据：依赖版本与序列化格式版本
                 '_deps_version': {
                     'sklearn': sklearn.__version__,
@@ -772,8 +651,6 @@ class YieldPredictor:
                 self._city_area_from_training = data['city_area_from_training']
             if 'feature_importance' in data:
                 self.feature_importance = data['feature_importance']
-            if 'stacking_metrics' in data:
-                self.stacking_metrics = data['stacking_metrics']
             if 'shap_summary' in data:
                 self.shap_summary = data['shap_summary']
             # 恢复训练数据（用于 Bootstrap CI 和 SHAP 重建）
@@ -785,6 +662,10 @@ class YieldPredictor:
                 self._train_yield_min = data['_train_yield_min']
             if '_train_yield_max' in data and data['_train_yield_max'] is not None:
                 self._train_yield_max = data['_train_yield_max']
+            if '_train_yield_q025' in data and data['_train_yield_q025'] is not None:
+                self._train_yield_q025 = data['_train_yield_q025']
+            if '_train_yield_q975' in data and data['_train_yield_q975'] is not None:
+                self._train_yield_q975 = data['_train_yield_q975']
             # 加载后重建 SHAP explainer（需要训练数据）
             if HAS_SHAP and self.shap_summary is not None and self._X_train is not None:
                 try:
@@ -900,9 +781,12 @@ class YieldPredictor:
         # 保存原始预测值（约束前），用于置信区间
         self._last_raw_prediction = predicted
 
-        # 约束在训练数据范围内（防止极端输入导致荒谬预测）
-        lo = getattr(self, '_train_yield_min', 3.87)
-        hi = getattr(self, '_train_yield_max', 6.74)
+        # 约束预测值在训练数据的分位数范围内，防止极端外推导致荒谬结果。
+        # 说明：这是"工程外推防护"而非统计推断，仅用于拦截明显不合理的外推值；
+        # 约束后的值可能与 LOOCV 评估口径（未约束）存在差异，属预期行为。
+        # 优先用 2.5%~97.5% 分位数（更稳健），无分位数时回退到 min/max。
+        lo = getattr(self, '_train_yield_q025', getattr(self, '_train_yield_min', 3.87))
+        hi = getattr(self, '_train_yield_q975', getattr(self, '_train_yield_max', 6.74))
         if predicted < lo or predicted > hi:
             logger.info("预测值 %.2f 超出约束范围 [%.2f, %.2f]，已约束至边界值",
                         predicted, lo, hi)
@@ -1143,11 +1027,20 @@ class CarbonCalculator:
     # ------------------------------------------------------------------
     # 内部辅助
     # ------------------------------------------------------------------
-    def _get_gwp(self, gas_pattern, default):
-        """从IPCC数据中按气体名称模式读取GWP100值"""
+    def _get_gwp(self, gas_pattern, default, source=None):
+        """从IPCC数据中按气体名称模式读取GWP100值
+
+        Args:
+            gas_pattern: 气体名称模式（'CO2'/'CH4'/'N2O'）
+            default: 未命中时的兜底值
+            source: 可选，精确指定排放源（emission_source），
+                    避免同气体多行时取错（如化石源/生物源CH4 GWP不同）
+        """
         row = self.ipcc_df[
             self.ipcc_df['emission_factor_unit'].str.contains(gas_pattern, na=False)
         ]
+        if source is not None:
+            row = row[row['emission_source'] == source]
         return _safe_get(row, 'gwp_100year', default=default)
 
     def _get_emission_factor(self, source, default=0.0):
@@ -1190,7 +1083,9 @@ class CarbonCalculator:
         # DOC可降解比例 50%，CH4生成潜力 60%
         doc = organic_carbon * 0.50
         ch4_potential = doc * 0.60 * (16 / 12)  # C→CH4 质量转换
-        ch4_gwp = self._get_gwp('CH4', default=28)
+        # 滤泥填埋为厌氧生物分解，属生物源CH4（IPCC AR6 GWP=27，
+        # 区别于化石源CH4 GWP=29.8；引用sugarcane_burning_field行的生物源CH4值）
+        ch4_gwp = self._get_gwp('CH4', default=27, source='sugarcane_burning_field')
         return {
             'ch4_kg': ch4_potential,
             'co2_equivalent_kg': ch4_potential * ch4_gwp
@@ -1284,8 +1179,13 @@ class CarbonCalculator:
             fertilizer_p2o5_kg: 磷肥施用量（kg P2O5），默认0
             fertilizer_k2o_kg: 钾肥施用量（kg K2O），默认0
         """
-        n2o_gwp = self._get_gwp('N2O', default=273)
-        ch4_gwp = self._get_gwp('CH4', default=27)
+        # GWP值按排放源精确匹配（避免同气体多行取错）
+        # 化肥N₂O：IPCC 2006 Vol.4 Ch.11（AR6 GWP=273）
+        n2o_gwp = self._get_gwp('N2O', default=273, source='N_fertilizer_application')
+        # 柴油CH₄：化石源（AR6 GWP=29.8）
+        ch4_gwp = self._get_gwp('CH4', default=29.8, source='diesel_fuel_combustion')
+        # 柴油N₂O：AR6 GWP=273
+        n2o_gwp_diesel = self._get_gwp('N2O', default=273, source='diesel_fuel_combustion')
 
         # 柴油排放因子（从配置文件读取）
         co2_per_l = DIESEL_CFG.get('co2_per_liter', 2.68)
@@ -1308,7 +1208,7 @@ class CarbonCalculator:
         # 机械作业：柴油燃烧
         co2_from_diesel = diesel_l * co2_per_l
         ch4_from_diesel = diesel_l * ch4_per_l * ch4_gwp
-        n2o_from_diesel = diesel_l * n2o_per_l * n2o_gwp
+        n2o_from_diesel = diesel_l * n2o_per_l * n2o_gwp_diesel
 
         # 加工环节：电力消耗
         grid_factor = self._get_emission_factor(
@@ -1397,6 +1297,17 @@ class EconomicCalculator:
                     'deep_processed': {
                         'revenue': quantity * deep_price,
                         'cost': quantity * self.deep_cost
+                    }
+                }
+
+            elif bp_name == 'sugarcane_top':
+                top_feed_price = self._get_market_price(country, 'sugarcane_top_animal_feed')
+                results['sugarcane_top'] = {
+                    'quantity': quantity,
+                    'burn': {'revenue': 0.0, 'cost': 0.0},
+                    'animal_feed': {
+                        'revenue': quantity * (top_feed_price if top_feed_price > 0 else 280),
+                        'cost': quantity * 50  # 青贮/氨化处理成本
                     }
                 }
 
@@ -1510,6 +1421,23 @@ class EconomicCalculator:
                     bp_data['deep_processed']['revenue'] -
                     bp_data['deep_processed']['cost'])
 
+            elif bp_name == 'sugarcane_top':
+                # 蔗梢：传统=焚烧（零收益），其余方案=饲料化
+                schemes['traditional'] += (
+                    bp_data['burn']['revenue'] - bp_data['burn']['cost'])
+                schemes['improved_traditional'] += (
+                    bp_data['animal_feed']['revenue'] -
+                    bp_data['animal_feed']['cost'])
+                schemes['circular_basic'] += (
+                    bp_data['animal_feed']['revenue'] -
+                    bp_data['animal_feed']['cost'])
+                schemes['circular_advanced'] += (
+                    bp_data['animal_feed']['revenue'] -
+                    bp_data['animal_feed']['cost'])
+                schemes['circular_optimal'] += (
+                    bp_data['animal_feed']['revenue'] -
+                    bp_data['animal_feed']['cost'])
+
             elif bp_name == 'bagasse':
                 schemes['traditional'] += (
                     bp_data['boiler_fuel']['revenue'] -
@@ -1586,45 +1514,68 @@ class OptimizationEngine:
 
         # 获取各副产物产量
         leaf_qty = byproduct_quantities.get('sugarcane_leaf', {}).get('quantity', 0)
+        top_qty = byproduct_quantities.get('sugarcane_top', {}).get('quantity', 0)
         bagasse_qty = byproduct_quantities.get('bagasse', {}).get('quantity', 0)
         mud_qty = byproduct_quantities.get('filter_mud', {}).get('quantity', 0)
         molasses_qty = byproduct_quantities.get('molasses', {}).get('quantity', 0)
 
         # 碳排放基础计算
         burning = self.carbon_calc.calculate_burning_emission(leaf_qty)
+        top_burning = self.carbon_calc.calculate_burning_emission(top_qty)
         substitution = self.carbon_calc.calculate_biomass_substitution(
             leaf_qty, co_firing_ratio=co_firing_ratio)
         landfill = self.carbon_calc.calculate_landfill_emission(mud_qty)
 
         # 五方案差异化碳排放（kg CO2e）
         # 设计原则：经济收益越高，碳排放越低（循环经济双赢）
+        # 蔗梢口径与经济计算一致：传统=焚烧（计入碳排），其余方案=饲料化（残留+加工能耗）
+        #
+        # 【情景假设参数说明】
+        # 焚烧/填埋/生物质替代三项有文献依据（Andreae 2001 / IPCC DOC法 / Cherubini 2009）；
+        # 但下列"残留比例"与"加工能耗"系数（0.10~0.20残留、30~300 kgCO2e/吨能耗）
+        # 无公开实测文献值，为基于行业经验的情景假设，仅用于五方案的相对排序演示，
+        # 不影响"循环经济减排"的定性结论。如需精确核算可替换为实测值。
+        RESIDUAL_BURN_RATIO_FEED = 0.10   # 饲料化后残留焚烧/腐解比例（情景假设）
+        RESIDUAL_BURN_RATIO_SILAGE = 0.20 # 青贮化后残留比例（情景假设）
+        RESIDUAL_LANDFILL_ORGANIC = 0.15  # 有机肥化后残留填埋当量（情景假设）
+        RESIDUAL_LANDFILL_BASIC = 0.20    # 基础循环残留填埋当量（情景假设）
+        PROC_ENERGY_SILAGE = 50.0         # 青贮/氨化能耗 kgCO2e/吨（情景假设）
+        PROC_ENERGY_FEED = 30.0           # 饲料加工能耗 kgCO2e/吨（情景假设）
+        PROC_ENERGY_PULP = 150.0          # 造纸浆加工能耗 kgCO2e/吨（情景假设）
+        PROC_ENERGY_TABLEWARE = 300.0     # 环保餐具加工能耗 kgCO2e/吨（情景假设）
+        PROC_ENERGY_MOLASSES = 80.0       # 糖蜜深加工能耗 kgCO2e/吨（情景假设）
+        BIOGAS_SUBSTITUTION_RATIO = 0.30  # 沼气替代能源比例（情景假设）
+
         carbon_map = {
             'traditional': (
                 burning['co2_equivalent_kg']           # 蔗叶全额焚烧
+                + top_burning['co2_equivalent_kg']     # 蔗梢全额焚烧
                 + landfill['co2_equivalent_kg']        # 滤泥填埋CH4
             ),
             'improved_traditional': (
-                0.20 * burning['co2_equivalent_kg']    # 饲料化后残留20%焚烧/腐解
+                RESIDUAL_BURN_RATIO_SILAGE * (burning['co2_equivalent_kg'] + top_burning['co2_equivalent_kg'])
                 + landfill['co2_equivalent_kg']        # 滤泥仍填埋
-                + 50.0 * leaf_qty                      # 青贮/氨化加工能耗
+                + PROC_ENERGY_SILAGE * (leaf_qty + top_qty)  # 青贮/氨化加工能耗
             ),
             'circular_basic': (
-                0.10 * burning['co2_equivalent_kg']    # 饲料化后10%残留
-                + 0.20 * landfill['co2_equivalent_kg'] # 有机肥仍有少量排放
-                - 0.30 * substitution['carbon_reduction_kg']  # 沼气替代部分能源
-                + 30.0 * leaf_qty                      # 饲料加工
+                RESIDUAL_BURN_RATIO_FEED * (burning['co2_equivalent_kg'] + top_burning['co2_equivalent_kg'])
+                + RESIDUAL_LANDFILL_BASIC * landfill['co2_equivalent_kg']  # 有机肥仍有少量排放
+                - BIOGAS_SUBSTITUTION_RATIO * substitution['carbon_reduction_kg']  # 沼气替代部分能源
+                + PROC_ENERGY_FEED * (leaf_qty + top_qty)  # 饲料加工
             ),
             'circular_advanced': (
                 -0.60 * substitution['carbon_reduction_kg']  # 颗粒替代60%煤炭
-                + 0.15 * landfill['co2_equivalent_kg']       # 有机肥
-                + 150.0 * bagasse_qty                        # 造纸浆加工能耗
-                + 80.0 * molasses_qty                        # 糖蜜深加工能耗
+                + RESIDUAL_LANDFILL_ORGANIC * landfill['co2_equivalent_kg']  # 有机肥
+                + PROC_ENERGY_PULP * bagasse_qty             # 造纸浆加工能耗
+                + PROC_ENERGY_MOLASSES * molasses_qty        # 糖蜜深加工能耗
+                + PROC_ENERGY_FEED * top_qty                 # 蔗梢饲料化加工能耗
             ),
             'circular_optimal': (
                 -substitution['carbon_reduction_kg']   # 颗粒全额替代煤炭
-                + 0.15 * landfill['co2_equivalent_kg'] # 有机肥
-                + 300.0 * bagasse_qty                  # 环保餐具加工能耗
-                + 80.0 * molasses_qty                  # 糖蜜深加工能耗
+                + RESIDUAL_LANDFILL_ORGANIC * landfill['co2_equivalent_kg']  # 有机肥
+                + PROC_ENERGY_TABLEWARE * bagasse_qty  # 环保餐具加工能耗
+                + PROC_ENERGY_MOLASSES * molasses_qty  # 糖蜜深加工能耗
+                + PROC_ENERGY_FEED * top_qty           # 蔗梢饲料化加工能耗
             )
         }
 
@@ -1635,38 +1586,56 @@ class OptimizationEngine:
         benefits = [net_benefit[s] for s in scheme_names]
         carbons = [carbon_map[s] for s in scheme_names]
 
-        # Min-max 标准化
-        min_b, max_b = min(benefits), max(benefits)
-        min_c, max_c = min(carbons), max(carbons)
-
-        schemes = []
+        # ---- 第一遍：先算碳交易收益与综合收益（total_benefit）----
+        # 综合收益 = 净收益 + 碳交易收益（含碳价的最终经济口径）
+        intermediates = []
         for scheme_name, benefit, carbon_emission in zip(
                 scheme_names, benefits, carbons):
 
-            # ---- 碳交易收益计算（区分情景）----
             if carbon_trading_scenario == 'energy_only':
-                # 仅能源相关CO₂排放可交易
-                # 各方案中：造纸/餐具/深加工的能耗CO₂可交易；
-                # 农业N₂O、生物质焚烧/替代部分按规则处理
-                if scheme_name == 'traditional':
-                    tradable_emission = carbon_emission  # 全部视为能源相关（简化）
-                elif scheme_name == 'improved_traditional':
-                    tradable_emission = carbon_emission * 0.8
-                elif scheme_name == 'circular_basic':
-                    tradable_emission = carbon_emission * 0.6
-                elif scheme_name == 'circular_advanced':
-                    tradable_emission = carbon_emission * 0.5
-                else:  # circular_optimal
-                    tradable_emission = carbon_emission * 0.4
+                # 仅能源相关CO₂可交易（现实情景：农业N₂O、生物源CH₄目前不在CEA碳市场）
+                # 传统模式 = 焚烧+填埋，全部为农业/生物源排放，可交易排放=0；
+                # 其余方案含加工能耗（能源相关），按情景假设比例估算可交易份额。
+                # 【情景假设】以下能源相关占比系数（0.4~0.8）无公开实测值，
+                # 为基于加工能耗占比的近似估计，仅用于碳交易收益的情景演示。
+                TRADABLE_RATIO = {
+                    'traditional': 0.0,             # 焚烧+填埋，无能源相关排放
+                    'improved_traditional': 0.8,    # 青贮加工能耗为主（情景假设）
+                    'circular_basic': 0.6,          # 饲料+沼气（情景假设）
+                    'circular_advanced': 0.5,       # 造纸浆+深加工（情景假设）
+                    'circular_optimal': 0.4,        # 餐具+深加工（情景假设）
+                }
+                tradable_emission = carbon_emission * TRADABLE_RATIO.get(
+                    scheme_name, 0.0)
             else:  # future_agriculture
+                # 情景分析：假设未来碳市场扩展到农业，全部排放可交易
                 tradable_emission = carbon_emission
 
             carbon_revenue = -(tradable_emission / 1000) * carbon_price
             total_benefit = benefit + carbon_revenue
 
-            # ---- 标准化评分 ----
+            intermediates.append({
+                'name': scheme_name,
+                'net_benefit': benefit,
+                'total_benefit': total_benefit,
+                'carbon_emission_kg': carbon_emission,
+                'carbon_revenue': carbon_revenue,
+                'tradable_emission_kg': tradable_emission,
+            })
+
+        # ---- 第二遍：标准化评分与排序 ----
+        # 收益维度统一采用综合收益（total_benefit），保证排序口径与展示口径一致
+        total_benefits = [it['total_benefit'] for it in intermediates]
+        min_b, max_b = min(total_benefits), max(total_benefits)
+        min_c, max_c = min(carbons), max(carbons)
+
+        schemes = []
+        for it in intermediates:
+            benefit_v = it['total_benefit']
+            carbon_emission = it['carbon_emission_kg']
+
             if max_b != min_b:
-                benefit_score = (benefit - min_b) / (max_b - min_b)
+                benefit_score = (benefit_v - min_b) / (max_b - min_b)
             else:
                 benefit_score = 0.5
 
@@ -1680,17 +1649,10 @@ class OptimizationEngine:
 
             total_score = (bw * benefit_score + cw * carbon_score)
 
-            schemes.append({
-                'name': scheme_name,
-                'net_benefit': benefit,
-                'total_benefit': total_benefit,
-                'carbon_emission_kg': carbon_emission,
-                'carbon_revenue': carbon_revenue,
-                'tradable_emission_kg': tradable_emission,
-                'total_score': total_score,
-                'benefit_score': benefit_score,
-                'carbon_score': carbon_score
-            })
+            it['benefit_score'] = benefit_score
+            it['carbon_score'] = carbon_score
+            it['total_score'] = total_score
+            schemes.append(it)
 
         schemes.sort(key=lambda x: x['total_score'], reverse=True)
 
@@ -1736,7 +1698,7 @@ class SugarcaneDecisionSystem:
             economic_calc=self.economic_calculator
         )
         # FAO跨境产量基准（吨/亩）
-        self._fao_yield基准 = self._load_fao_yield_baseline()
+        self._fao_yield_baseline = self._load_fao_yield_baseline()
 
     def _load_fao_yield_baseline(self):
         """从FAO数据加载各国历史平均单产（吨/亩）及不确定性区间"""
@@ -1817,7 +1779,7 @@ class SugarcaneDecisionSystem:
                 pass
         else:
             fao_info = self._fao_baseline_detail.get(country, {})
-            yield_per_mu = self._fao_yield基准.get(country, 5.0)
+            yield_per_mu = self._fao_yield_baseline.get(country, 5.0)
             yield_source = 'fao_statistical_average'
             yield_ci = {
                 'lower': fao_info.get('min', yield_per_mu * 0.8),

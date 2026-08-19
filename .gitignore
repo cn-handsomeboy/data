@@ -5,8 +5,7 @@ __pycache__/
 dist/
 build/
 
-# Trained model files (should not be in repo)
-models/*.pkl
+# Trained model files (in repo for cold-start speed; fallback retrain if version mismatch)
 models/*.hash
 
 # IDE
@@ -16,6 +15,9 @@ models/*.hash
 # OS
 .DS_Store
 Thumbs.db
+
+# Backup files
+*.bak
 
 # Data backups
 data/weather_data_backup.csv

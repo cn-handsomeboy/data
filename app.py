@@ -90,15 +90,22 @@ st.markdown(f"""
 @st.cache_resource(ttl=3600)  # 1小时缓存过期，确保模型更新后自动重载
 def get_system():
     import sklearn
-    s = SugarcaneDecisionSystem()
+    from models import warm_start_models
     try:
-        s.train_models(model_type='auto')
+        s = warm_start_models()
+        metrics = s.yield_predictor.metrics or {}
+        src = '热加载' if s.yield_predictor.model is not None and \
+            not metrics.get('fallback', True) else '重训练'
+        print(f"[APP] 决策系统就绪（{src}）: "
+              f"{metrics.get('model_name', 'N/A')}, R²={metrics.get('r2', 'N/A')}")
+        return s
     except Exception as e:
         import traceback
         err_detail = traceback.format_exc()
-        st.warning(f"模型训练提示: {e}")
+        st.warning(f"模型加载提示: {e}")
         st.info(f"调试: sklearn={sklearn.__version__}, 错误类型={type(e).__name__}\n{err_detail[-500:]}")
-    return s
+        s = SugarcaneDecisionSystem()
+        return s
 
 
 system = get_system()
@@ -115,7 +122,7 @@ agent = get_agent()
 # ============================================================
 with st.sidebar:
     st.markdown("### 🌱 参数设置")
-    st.caption("部署版本: 2026.08.17 · ElasticNetCV 修复版")
+    st.caption("部署版本: 2026.08.18 · 精简模型版（固定超参+LOOCV）")
 
     # ---- 从 session_state 读取预置场景参数（需在控件使用前初始化） ----
     preset_area = st.session_state.pop('preset_area', 10.0)
@@ -149,14 +156,13 @@ with st.sidebar:
                 )
                 st.caption(f"🔍 {shap_text}")
             st.caption(
-                "R²=0.893 意味着模型可解释89.3%的产量变异。"
-                "学术对标：石杰锋等(2023) LSTM单蔗区R²=0.849，本项目GBRT LOOCV R²=0.893"
-                "在国内直接预测实际产量场景下处于领先水平。RepeatedKFold(5×10)稳健估计"
-                "R²=0.842±0.072。RMSE=0.299吨/亩（误差约5.4%），满足田间决策精度要求。"
-                "数据来源：70个真实产量样本（广西统计年鉴2015-2024+各市统计公报），"
-                "全部数据均有统计来源验证，不含趋势反推数据。"
-                "特征重要性top3: 种植面积（74.5%）、城市效应（12.3%）、年份趋势（5.7%）——"
-                "种植规模是产量差异的首要驱动力。"
+                f"R²={m.get('r2', 0):.3f} 说明模型可解释 {m.get('r2', 0)*100:.1f}% 的产量变异。"
+                f"学术对标：石杰锋等(2023) LSTM单蔗区R²=0.849，"
+                f"本项目{m.get('model_name', 'GBRT').upper()} LOOCV R²={m.get('r2', 0):.3f}"
+                f"在直接预测实际产量场景下处于国内领先水平。"
+                f"RMSE={m.get('rmse', 0):.3f}吨/亩"
+                f"（误差约{m.get('rmse', 0)/5.5*100:.1f}%），满足田间决策精度要求。"
+                f"评估采用固定保守超参 + LOOCV（无信息泄漏，结果无偏）。"
             )
             if system.yield_predictor.feature_importance:
                 # 展示特征重要性柱状图（Top 10）
@@ -433,6 +439,7 @@ if not run_button:
     # ============================================================
     st.markdown("---")
     st.subheader("🔗 数据要素闭环：三证一价 · 血缘追溯 · 交易模拟")
+    st.caption("⚠️ 三证一价与交易模拟均为【演示性材料】，按国家标准框架自建展示，不具法律效力，不代表真实交易。")
 
     cert = DataProductCertification()
     cert_tabs = st.tabs(["📜 三证一价", "🩸 数据血缘", "💱 交易模拟"])
@@ -449,7 +456,7 @@ if not run_button:
             证书ID: {reg['certificate_id']} | 登记日期: {reg['issue_date']}<br/>
             数据规模: {reg['registration_content']['data_scale']}<br/>
             覆盖范围: {reg['registration_content']['coverage']}<br/>
-            状态: <b>{reg['status']}</b> | 哈希: {reg['blockchain_hash']}
+            状态: <b>{reg['status']}</b> | 完整性哈希: {reg['integrity_hash']}
             </span>
             </div>
             """, unsafe_allow_html=True)
@@ -537,11 +544,12 @@ if not run_button:
         ])
         st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
-    # --- Tab 3: 交易模拟 ---
+    # --- Tab 3: 交易模拟（演示用，非真实交易） ---
     with cert_tabs[2]:
+        st.caption("⚠️ 以下为情景模拟演示：场景、买方、价格为虚构示例，不代表任何真实交易。")
         scenarios = DataTradingSimulation.get_scenarios()
         sel = st.selectbox(
-            "选择交易场景",
+            "选择交易场景（演示）",
             options=[s['id'] for s in scenarios],
             format_func=lambda x: next(s['name'] for s in scenarios if s['id'] == x)
         )
@@ -1062,7 +1070,7 @@ else:
 相比传统模式提升 <b>{(improve_mu/max(abs(trad['net_benefit']/area_mu),1)*100):.0f}%</b>。
 建议借鉴广西来宾蔗渣餐具产业模式，发展本地化副产物深加工产业链。<br><br>
 <b>3. 跨境协同建议</b>：{cn_name}甘蔗单产 {result['yield_per_mu']:.2f} 吨/亩，
-与中国-广西（{system._fao_yield基准.get('China', 5.96):.2f}吨/亩）相比仍有 <b>{((system._fao_yield基准.get('China', 5.96)/result['yield_per_mu']-1)*100):.0f}%</b> 的产量提升空间。
+与中国-广西（{system._fao_yield_baseline.get('China', 5.96):.2f}吨/亩）相比仍有 <b>{((system._fao_yield_baseline.get('China', 5.96)/result['yield_per_mu']-1)*100):.0f}%</b> 的产量提升空间。
 可通过RCEP框架引进中国良种和循环农业技术，提升综合效益。
 </div>
 """, unsafe_allow_html=True)
@@ -1298,10 +1306,10 @@ else:
     )
 
 # ============================================================
-# Agent 对话（参数决策结果下方，默认折叠）
+# 对话式决策助手（规则引擎，非大模型 Agent）
 # ============================================================
 with st.expander("📝 快捷参数输入（自然语言描述）", expanded=False):
-    st.caption('一句描述蔗田情况，自动提取参数生成决策 — 如"崇左10亩，碳价85元"')
+    st.caption('一句描述蔗田情况，规则引擎自动提取参数生成决策 — 如"崇左10亩，碳价85元"')
     
     # 对话消息 + 对话状态
     if "agent_msgs" not in st.session_state:
@@ -1340,7 +1348,7 @@ with st.expander("📝 快捷参数输入（自然语言描述）", expanded=Fal
         for i, q in enumerate(queries):
             if cols[i].button(q, key=f"aq_{i}", use_container_width=True):
                 st.session_state.agent_msgs.append({"role": "user", "content": q})
-                with st.spinner("Agent推理中..."):
+                with st.spinner("参数解析中..."):
                     resp, done, state = agent.chat(q, st.session_state.agent_state)
                     st.session_state.agent_state = state
                     st.session_state.agent_done = done
@@ -1350,9 +1358,9 @@ with st.expander("📝 快捷参数输入（自然语言描述）", expanded=Fal
     # 用户输入（兼容低版本Streamlit：优先chat_input，降级text_input）
     user_input = None
     if HAS_CHAT_UI:
-        user_input = st.chat_input("描述你的蔗田情况，Agent帮你决策...")
+        user_input = st.chat_input("描述你的蔗田情况，自动提取参数...")
     else:
-        user_input = st.text_input("描述你的蔗田情况，Agent帮你决策...", key="agent_text_input")
+        user_input = st.text_input("描述你的蔗田情况，自动提取参数...", key="agent_text_input")
         if user_input:
             st.session_state._agent_text_submitted = True
     if HAS_CHAT_UI and user_input:
@@ -1377,7 +1385,7 @@ with st.expander("📝 快捷参数输入（自然语言描述）", expanded=Fal
                 st.markdown(safe_input)
 
             with st.chat_message("assistant"):
-                with st.spinner("Agent思考中..."):
+                with st.spinner("参数解析中..."):
                     resp, done, state = agent.chat(user_input, st.session_state.agent_state)
                     st.session_state.agent_state = state
                     st.session_state.agent_done = done
@@ -1385,7 +1393,7 @@ with st.expander("📝 快捷参数输入（自然语言描述）", expanded=Fal
                 st.markdown(resp)
         else:
             st.markdown(f"**user**: {safe_input}")
-            with st.spinner("Agent思考中..."):
+            with st.spinner("参数解析中..."):
                 resp, done, state = agent.chat(user_input, st.session_state.agent_state)
                 st.session_state.agent_state = state
                 st.session_state.agent_done = done

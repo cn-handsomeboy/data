@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.pytest_cache
+.mypy_cache
+
+# Virtual environments
+venv
+.venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and generated artifacts
+logs/*.log
+models/*.pkl
+models/*.hash
+data/.file_hashes.json
+测试报告.pdf
+测试报告_*.pdf
+
+# Documentation not needed in image (keep core docs)
+PPT_大纲.md
+视频录制脚本*.md
+获奖概率提升终极建议.md
+项目质量审查报告.md
+
+# Archive
+submission_preview.zip

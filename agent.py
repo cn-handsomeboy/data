@@ -1,11 +1,16 @@
 """
-蔗循智策 Agent 对话决策系统
+蔗循智策 对话式决策助手（规则引擎版）
 
-2026 AI Agent 范式：自然语言输入 → 智能参数解析 → 模型调用 →
+功能：自然语言输入 → 规则式参数解析（regex + keyword）→ 模型调用 →
 推理链生成 → 自然语言决策报告
 
-架构设计为可插拔：当前使用规则引擎（regex + keyword），
-预留 LLM API 接口（OpenAI-compatible / Qwen / DeepSeek）。
+技术定位说明（重要）：
+- 当前实现为【规则引擎】而非大模型 Agent：意图识别与参数提取
+  基于正则与关键词匹配，无 LLM 推理能力；
+- 架构预留 LLM API 接口（OpenAI-compatible / Qwen / DeepSeek），
+  可插拔升级为真正的 AI Agent；
+- 对外展示请如实表述为"对话式决策助手（规则引擎）"，
+  避免与"大模型 Agent"混淆。
 """
 
 import json
@@ -246,9 +251,10 @@ OPTIONAL_PARAMS = {
 
 
 class SugarcaneAgent:
-    """蔗循智策 AI Agent
+    """蔗循智策 对话式决策助手（规则引擎实现，非大模型 Agent）
 
-    支持多轮对话：参数不全时主动追问，参数齐全后生成决策报告。
+    通过正则+关键词解析自然语言参数，支持多轮追问收集参数，
+    参数齐全后调用决策模型生成报告。预留 LLM 接口可升级为 AI Agent。
 
     用法：
         agent = SugarcaneAgent(system=已有的SugarcaneDecisionSystem实例)
@@ -454,7 +460,7 @@ class SugarcaneAgent:
         src_label = 'LOOCV回归模型' if yield_src == 'model' else 'FAO统计均值'
 
         lines = [
-            f"## 🌱 蔗循智策 Agent 决策报告",
+            f"## 🌱 蔗循智策 决策报告（规则引擎版）",
             f"",
             f"> **{params.get('city', '未知')}** {params['area_mu']:.0f}亩 | "
             f"碳价 {params['carbon_price']:.0f} 元/吨 | 产量来源: {src_label}",

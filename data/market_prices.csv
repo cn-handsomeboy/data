@@ -1,7 +1,7 @@
 country,product_name,price_min,price_max,price_avg_yuan_per_ton,currency,note
-China,sugarcane_procurement,510,540,540,yuan_per_ton,"广西糖料蔗收购价格(来源: 新华财经 2026-07-17; 2025/2026榨季540元/吨; 蔗农收入328亿元同比+20%)"
-Thailand,sugarcane_procurement,900,1100,1000,yuan_per_ton,"泰国甘蔗收购价(约120-130泰铢/吨, 按1:5汇率换算)"
-Vietnam,sugarcane_procurement,600,800,700,yuan_per_ton,"越南甘蔗收购价(约90-100万越南盾/吨, 按1:3500换算)"
+China,sugarcane_procurement,510,540,540,yuan_per_ton,广西糖料蔗收购价格(来源: 新华财经 2026-07-17; 2025/2026榨季540元/吨; 蔗农收入328亿元同比+20%)
+Thailand,sugarcane_procurement,240,285,260,yuan_per_ton,"泰国甘蔗收购价(2022/23榨季最终价1197泰铢/吨约240元/吨, 泰国内阁确认; 2023/24榨季含CCS溢价1420泰铢/吨约284元/吨, 按1:5汇率)"
+Vietnam,sugarcane_procurement,320,350,335,yuan_per_ton,"越南甘蔗收购价(2022/23榨季田间采购价120-130万越南盾/吨约320-350元/吨, 越共电子报/泛糖科技, 按1:3500汇率)"
 China,sugarcane_leaf,200,350,280,yuan_per_ton,蔗叶饲料化价格(来源: 广西甘蔗综合利用报道)
 Thailand,sugarcane_leaf,150,300,220,yuan_per_ton,泰国蔗叶饲料价格(估算)
 Vietnam,sugarcane_leaf,100,250,180,yuan_per_ton,越南蔗叶饲料价格(估算)
@@ -26,11 +26,11 @@ Vietnam,molasses_direct,500,900,700,yuan_per_ton,越南糖蜜直接销售价格(
 China,molasses_deep_processed,1500,2500,2000,yuan_per_ton,糖蜜深加工产品(甘蔗醋/酒精等)价格(来源: 崇左甘蔗醋产品)
 Thailand,molasses_deep_processed,1200,2200,1700,yuan_per_ton,泰国糖蜜深加工价格(估算)
 Vietnam,molasses_deep_processed,1000,2000,1500,yuan_per_ton,越南糖蜜深加工价格(估算)
-China,carbon_credit,72,92,80,yuan_per_ton,"全国碳市场CEA收盘价范围(来源: 上海环境能源交易所; 2026-07-22收盘91.03元/吨; 2026H1均价77.2元/吨)"
+China,carbon_credit,72,92,80,yuan_per_ton,全国碳市场CEA收盘价范围(来源: 上海环境能源交易所; 2026-07-22收盘91.03元/吨; 2026H1均价77.2元/吨)
 Thailand,carbon_credit,40,60,50,yuan_per_ton,"泰国碳信用价格(估算, 参考国际自愿碳市场)"
 Vietnam,carbon_credit,30,50,40,yuan_per_ton,"越南碳信用价格(估算, 参考国际自愿碳市场)"
 China,bagasse_pulp_paper,500,800,650,yuan_per_ton,蔗渣造纸浆价格(来源: 来宾蔗渣环保餐具出口基地 广西日报2023)
-China,bagasse_tableware,1200,1800,1500,yuan_per_ton,"蔗渣环保浆料(来源: 广西兴桂纸业2024-蔗渣浆成本每吨降低466元; 众鑫股份招股书-蔗渣浆市价1000-2000元/吨; 加工成本800元/吨含制浆+清洗+能源)"
+China,bagasse_tableware,1200,1800,1500,yuan_per_ton,蔗渣环保浆料(来源: 广西兴桂纸业2024-蔗渣浆成本每吨降低466元; 众鑫股份招股书-蔗渣浆市价1000-2000元/吨; 加工成本800元/吨含制浆+清洗+能源)
 Thailand,bagasse_tableware,900,1500,1200,yuan_per_ton,"泰国蔗渣餐具价格(估算, 参考泰国Green Packaging纸浆模塑出口价)"
 Vietnam,bagasse_tableware,800,1300,1050,yuan_per_ton,"越南蔗渣餐具价格(估算, 参考越南Duy Tan纸模塑出口价)"
 Thailand,bagasse_pulp_paper,400,700,550,yuan_per_ton,泰国蔗渣纸浆价格(估算)

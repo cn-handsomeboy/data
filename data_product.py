@@ -29,8 +29,8 @@ DATA_LINEAGE_NODES = [
     {"id": "proc_clean", "name": "数据清洗与对齐", "type": "process", "detail": "缺失值填补、单位统一、年份对齐"},
     {"id": "proc_merge", "name": "多源数据融合", "type": "process", "detail": "气象+产量+FAO数据按年份/城市合并"},
     {"id": "feat_eng", "name": "特征工程", "type": "process", "detail": "生成城市哑变量、年份趋势、交互特征"},
-    {"id": "model_train", "name": "模型训练", "type": "process", "detail": "GBRT/Ridge/RF/ElasticNet LOOCV"},
-    {"id": "model_eval", "name": "模型评估", "type": "process", "detail": "LOOCV+RepeatedKFold+SHAP可解释性"},
+    {"id": "model_train", "name": "模型训练", "type": "process", "detail": "GBRT/Ridge 固定超参 LOOCV"},
+    {"id": "model_eval", "name": "模型评估", "type": "process", "detail": "LOOCV+SHAP可解释性"},
     {"id": "prod_yield", "name": "产量预测数据产品", "type": "product", "detail": "输入气象→输出单产(吨/亩)"},
     {"id": "prod_carbon", "name": "碳排放核算数据产品", "type": "product", "detail": "输入种植参数→输出CO2e(kg)"},
     {"id": "prod_econ", "name": "经济效益数据产品", "type": "product", "detail": "输入副产物→输出净收益(元)"},
@@ -91,6 +91,8 @@ class DataProductCertification:
             "issue_date": self.issue_date,
             "valid_until": "2027-12-31",
             "issuing_authority": "项目自主登记（对标 GB/T 47950-2026）",
+            "registration_note": "【演示性证书】本证书为项目团队按 GB/T 47950-2026 框架自建的展示材料，"
+                                 "未经官方登记机构审核，不具法律效力，仅用于演示数据资产管理流程。",
             "asset_category": "决策支持类数据产品",
             "data_sources": [
                 {"name": "广西甘蔗种植数据", "source": "广西统计年鉴", "license": "政府开放数据"},
@@ -107,13 +109,13 @@ class DataProductCertification:
                 "update_frequency": "年度更新（产量/FAO）+ 实时更新（碳价/API）",
                 "technical_architecture": "Python + scikit-learn + FastAPI + Streamlit",
             },
-            "blockchain_hash": self._hash(self.product_id + self.issue_date),
-            "status": "已登记",
+            "integrity_hash": self._hash(self.product_id + self.issue_date),
+            "status": "已登记（演示）",
         }
         return cert
 
     def generate_quality_cert(self) -> dict:
-        """生成数据质量证书"""
+        """生成数据质量证书（演示性自评估）"""
         # 读取实际数据计算质量指标
         quality_metrics = self._compute_quality_metrics()
 
@@ -123,60 +125,72 @@ class DataProductCertification:
             "product_id": self.product_id,
             "issue_date": self.issue_date,
             "assessment_standard": "GB/T 36344-2018 信息技术 数据质量评价指标",
+            "assessment_note": "【演示性自评估】完整性由数据缺失率自动计算；"
+                               "其余维度为基于数据事实的估算值，未经第三方机构评测。",
             "dimensions": {
                 "completeness": {
                     "name": "完整性",
                     "score": quality_metrics["completeness"],
+                    "method": "auto_computed（自动计算）",
                     "description": "关键字段无缺失，气象数据完整率99.2%",
                 },
                 "accuracy": {
                     "name": "准确性",
                     "score": quality_metrics["accuracy"],
-                    "description": "产量数据与统计年鉴交叉验证，误差<0.5%",
+                    "method": "estimated（估算）",
+                    "description": "31个真实产量锚点与统计年鉴/公报交叉核验；其余年份为趋势内插",
                 },
                 "consistency": {
                     "name": "一致性",
                     "score": quality_metrics["consistency"],
+                    "method": "estimated（估算）",
                     "description": "多源数据时间粒度、单位、行政区划统一对齐",
                 },
                 "timeliness": {
                     "name": "时效性",
                     "score": quality_metrics["timeliness"],
+                    "method": "estimated（估算）",
                     "description": "产量数据至2024年，碳价数据近12月滚动",
                 },
                 "traceability": {
                     "name": "可追溯性",
                     "score": quality_metrics["traceability"],
+                    "method": "estimated（估算）",
                     "description": "每条数据记录来源，模型预测有置信区间",
                 },
             },
             "overall_score": quality_metrics["overall"],
             "grade": "A" if quality_metrics["overall"] >= 90 else "B",
-            "inspector": "自动检测 + 人工复核",
+            "inspector": "项目自评估（自动计算+人工复核，非第三方评测）",
         }
         return cert
 
     def _compute_quality_metrics(self) -> dict:
-        """计算实际数据质量指标"""
+        """计算数据质量指标
+
+        说明：
+        - completeness（完整性）：由实际数据缺失率自动计算，可复现。
+        - 其余四维（准确性/一致性/时效性/可追溯性）为基于数据事实的
+          专家估算值（method='estimated'），非自动化实测：
+          * accuracy 依据：31个真实产量锚点与统计年鉴/公报交叉核对无误，
+            其余年份为趋势内插（见数据集来源说明），估算 98.5 表示锚点核验通过率；
+          * consistency 依据：多源数据已统一时间粒度/单位/行政区划；
+          * timeliness 依据：产量数据至2024年、碳价近12月滚动；
+          * traceability 依据：每条记录均有来源标注。
+        """
         try:
             gx = pd.read_csv(os.path.join(DATA_DIR, 'guangxi_sugarcane.csv'))
             weather = pd.read_csv(os.path.join(DATA_DIR, 'weather_data.csv'))
 
-            # 完整性
+            # 完整性（自动计算）
             gx_complete = 1 - gx.isnull().sum().sum() / (gx.shape[0] * gx.shape[1])
             wx_complete = 1 - weather.isnull().sum().sum() / (weather.shape[0] * weather.shape[1])
             completeness = round((gx_complete * 0.6 + wx_complete * 0.4) * 100, 1)
 
-            # 准确性（假设与统计年鉴一致）
+            # 以下四维为估算值（method='estimated'），依据见方法注释
             accuracy = 98.5
-
-            # 一致性
             consistency = 95.0
-
-            # 时效性
             timeliness = 92.0
-
-            # 可追溯性
             traceability = 100.0
 
             overall = round((completeness + accuracy + consistency + timeliness + traceability) / 5, 1)
@@ -188,6 +202,7 @@ class DataProductCertification:
                 "timeliness": timeliness,
                 "traceability": traceability,
                 "overall": overall,
+                "method": "completeness=auto_computed; others=estimated",
             }
         except Exception:
             return {
@@ -197,6 +212,7 @@ class DataProductCertification:
                 "timeliness": 92.0,
                 "traceability": 100.0,
                 "overall": 96.1,
+                "method": "fallback_estimated",
             }
 
     def generate_security_cert(self) -> dict:
@@ -279,7 +295,7 @@ class DataProductCertification:
         return report
 
     def get_all_certifications(self) -> dict:
-        """获取完整的三证一价"""
+        """获取完整的三证一价（演示性材料）"""
         return {
             "product_id": self.product_id,
             "product_name": self.product_name,
@@ -289,6 +305,11 @@ class DataProductCertification:
             "quality_certificate": self.generate_quality_cert(),
             "security_certificate": self.generate_security_cert(),
             "pricing_report": self.generate_pricing_report(),
+            "disclaimer": (
+                "【演示性材料】三证一价均为项目团队按国家标准框架自建的展示样例，"
+                "未经官方登记机构/评估机构审核，不具法律效力；定价为成本/市场/收益法"
+                "的演示测算，不代表实际成交价格。"
+            ),
         }
 
 
@@ -297,7 +318,13 @@ class DataProductCertification:
 # ---------------------------------------------------------------------------
 
 class DataTradingSimulation:
-    """数据要素交易场景模拟器"""
+    """数据要素交易场景模拟器（演示用）
+
+    ⚠️ 重要说明：本项目为高校参赛原型，尚未发生任何真实数据交易。
+    本模块仅用于【演示】数据要素市场化流通的模式设想——场景、
+    买方、价格均为虚构的示例参数，不代表实际交易、合同或收入。
+    展示时请如实说明为"情景模拟"。
+    """
 
     SCENARIOS = [
         {
@@ -352,11 +379,12 @@ class DataTradingSimulation:
 
     @classmethod
     def get_scenarios(cls) -> List[dict]:
+        """获取演示场景列表（虚构示例，非真实交易）"""
         return cls.SCENARIOS
 
     @classmethod
     def simulate_transaction(cls, scenario_id: str, months: int = 12) -> dict:
-        """模拟指定场景的交易流水"""
+        """模拟指定场景的交易流水（演示数据，非真实交易记录）"""
         # 防御超大 months 导致内存/CPU耗尽
         if not isinstance(months, int) or months < 1 or months > 120:
             return {"error": "months 必须是 1-120 之间的整数"}
@@ -397,6 +425,10 @@ class DataTradingSimulation:
                 "output_decision_records": months * 100,
                 "api_calls": months * 500,
             },
+            "disclaimer": (
+                "【情景模拟，非真实交易】本流水为演示性模拟数据，"
+                "不构成任何真实交易、合同或收入的证明。"
+            ),
         }
 
 
