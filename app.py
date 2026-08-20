@@ -31,6 +31,7 @@ from data_security import (
     DataClassifier, DataMasker, DataIntegrityChecker,
     SecurityManager, get_security_status
 )
+from llm_agent import enhance_decision_report, answer_question
 
 # ============================================================
 # 页面配置
@@ -945,6 +946,26 @@ else:
 
     st.markdown("---")
 
+    # ===== LLM 自然语言决策报告 =====
+    with st.expander("📝 自然语言决策报告（LLM 增强）", expanded=True):
+        try:
+            _llm_params = {
+                'city': city, 'country': country,
+                'area_mu': area_mu, 'avg_temp': avg_temp,
+                'precipitation': precipitation, 'sunshine': sunshine,
+                'carbon_price': carbon_price
+            }
+            _llm_report = enhance_decision_report(_llm_params, result)
+            if _llm_report:
+                st.markdown(_llm_report)
+                st.caption("💡 本报告由大语言模型基于决策核算事实生成，仅引用已计算数据，不编造额外指标。")
+            else:
+                st.info("LLM 决策报告未生成（未配置 API Key 或调用失败），已回退到规则模板。")
+        except Exception as e:
+            st.warning(f"LLM 报告生成出错: {e}")
+
+    st.markdown("---")
+
     # ===== 方案对比 + 碳排放 =====
     st.subheader("📋 方案对比分析")
     c1, c2 = st.columns([3, 2])
@@ -1208,6 +1229,32 @@ else:
 > 广西甘蔗种植面积 1,500 万亩（2024），副产物循环率每提升 10%，
 > 可新增碳汇收益 **1,000-3,000万元/年**。
             """)
+
+    # ===== LLM 自然语言问数 =====
+    st.markdown("---")
+    st.subheader("💬 自然语言问数（基于本次决策结果）")
+    _user_question = st.text_input(
+        "输入你的问题，例如：碳减排原理是什么？为什么推荐这个方案？",
+        placeholder="基于上方决策结果提问...",
+        key=f"llm_question_{city}_{area_mu}"
+    )
+    if st.button("🤖 提交问题", key=f"llm_ask_btn_{city}_{area_mu}") and _user_question.strip():
+        with st.spinner("LLM 正在基于决策事实作答..."):
+            try:
+                _llm_params = {
+                    'city': city, 'country': country,
+                    'area_mu': area_mu, 'avg_temp': avg_temp,
+                    'precipitation': precipitation, 'sunshine': sunshine,
+                    'carbon_price': carbon_price
+                }
+                _answer = answer_question(_user_question.strip(), _llm_params, result)
+                if _answer:
+                    st.markdown(f"**答：** {_answer}")
+                    st.caption("💡 回答仅引用本次决策核算事实，未提供的数据不会编造。")
+                else:
+                    st.info("LLM 问答未生成（未配置 API Key 或调用失败）。")
+            except Exception as e:
+                st.warning(f"LLM 问答出错: {e}")
 
     # ===== 空间可视化：广西+东盟地图 =====
     st.subheader("🗺️ 空间可视化：广西蔗区与东盟协同网络")
