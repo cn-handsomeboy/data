@@ -32,10 +32,56 @@ from data_security import (
     DataClassifier, DataMasker, DataIntegrityChecker,
     SecurityManager, get_security_status
 )
-from llm_agent import (
-    enhance_decision_report, answer_question, get_client,
-    rule_template_report, fallback_answer,
-)
+# LLM 增强为可选模块：导入失败时自动降级为规则模板，核心功能不受影响
+try:
+    from llm_agent import (
+        enhance_decision_report, answer_question, get_client,
+        rule_template_report, fallback_answer,
+    )
+    _LLM_IMPORT_OK = True
+except Exception as _llm_err:
+    import logging as _llm_logging
+    _llm_logging.getLogger("app").warning("llm_agent 导入失败，LLM 增强降级: %s", _llm_err)
+    _LLM_IMPORT_OK = False
+    enhance_decision_report = None
+    answer_question = None
+    get_client = None
+    # 兜底函数不依赖 LLM，定义本地版保证降级后仍有输出
+    _SCHEME_CN_FB = {
+        'traditional': '传统模式', 'improved_traditional': '改良传统模式',
+        'circular_basic': '基础循环模式', 'circular_advanced': '进阶循环模式',
+        'circular_optimal': '最优循环模式',
+    }
+    def rule_template_report(result, params):
+        opt = result['optimization']['optimal']
+        trad = result['optimization']['all_schemes'][-1]
+        improve = (opt['net_benefit'] / max(abs(trad['net_benefit']), 1) - 1) * 100
+        ce = result['carbon_emission']
+        area = params.get('area_mu', result.get('area_mu', 0))
+        city = params.get('city', '')
+        return (
+            f"### 决策报告（规则引擎生成）\n\n"
+            f"基于 {city}{area:.0f} 亩蔗田的产量预测、碳排放核算与多目标优化结果，"
+            f"系统推荐采用 **{_SCHEME_CN_FB.get(opt['name'], opt['name'])}**："
+            f"综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元，"
+            f"净收益 {opt['net_benefit']:,.0f} 元，较传统模式增收 **{improve:.0f}%**。\n\n"
+            f"**碳减排依据**：全链条碳排放 {ce['total_tons']:.2f} 吨CO₂e"
+            f"（种植 {ce['planting']:.0f} kg + 机械 {ce['mechanization']:.0f} kg + 加工 {ce['processing']:.0f} kg），"
+            f"碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元。\n\n"
+            f"**行动建议**：① 落实副产物循环利用路径（饲料化/有机肥/生物质颗粒/深加工）；"
+            f"② 关注碳价走势，适时参与碳普惠交易；"
+            f"③ 按监测参数建立台账，支撑 CCER 方法学申报与碳汇收益核算。"
+        )
+    def fallback_answer(question, result):
+        opt = result['optimization']['optimal']
+        return (
+            "当前未启用语言模型服务（未配置 SCZC_LLM_API_KEY 或导入失败），"
+            "无法开放作答。为你提供本次决策的确定性结论：\n\n"
+            f"- 最优方案：{_SCHEME_CN_FB.get(opt['name'], opt['name'])}，"
+            f"综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元\n"
+            f"- 净收益：{opt['net_benefit']:,.0f} 元，碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元\n\n"
+            "配置 SCZC_LLM_API_KEY 后可对子方案、碳减排原理、副产物利用路径等进行开放问答。"
+        )
 
 # ============================================================
 # 页面配置
@@ -746,7 +792,7 @@ if not st.session_state.get("run_flag", False):
             _samples = _m.get('loocv_samples')
 
             # LLM 状态：与 llm_agent 内部判断一致（available 由 API Key 决定）
-            _llm_on = get_client().available
+            _llm_on = get_client().available if _LLM_IMPORT_OK else False
             _llm_model = os.environ.get("SCZC_LLM_MODEL", "deepseek-chat")
         except Exception:
             _ver = _r2 = None
@@ -1029,7 +1075,7 @@ else:
                 # 仅缓存成功结果；失败进入 60s 冷却，避免每次交互重绘重复调用 API
                 with st.spinner("🤖 大语言模型正在生成决策报告..."):
                     _llm_report = enhance_decision_report(
-                        _llm_params, result, reasoning=_build_reasoning_chain(result))
+                        _llm_params, result, reasoning=_build_reasoning_chain(result)) if _LLM_IMPORT_OK else None
                 if _llm_report:
                     st.session_state[_cache_key] = _llm_report
                     st.session_state.pop(_fail_key, None)
@@ -1039,7 +1085,7 @@ else:
                 st.markdown(_llm_report)
                 st.caption("💡 本报告由大语言模型基于决策核算事实生成，仅引用已计算数据，不编造额外指标。")
             else:
-                if not get_client().available:
+                if not (_LLM_IMPORT_OK and get_client().available):
                     st.info("未配置 SCZC_LLM_API_KEY，已展示规则模板决策报告；配置 API Key 并重启应用后即可启用 LLM 报告润色。")
                 else:
                     st.info("LLM 报告调用未成功（网络/服务异常，已自动重试），已回退规则模板；可稍后刷新重试，或查看终端日志定位原因。")
@@ -1333,14 +1379,14 @@ else:
                 _q_key = f"llm_answer_{_fp}|{_user_question.strip()}"
                 _answer = st.session_state.get(_q_key)
                 if not _answer:
-                    _answer = answer_question(_user_question.strip(), _llm_params, result)
+                    _answer = answer_question(_user_question.strip(), _llm_params, result) if _LLM_IMPORT_OK else None
                     if _answer:
                         st.session_state[_q_key] = _answer
                 if _answer:
                     st.markdown(f"**答：** {_answer}")
                     st.caption("💡 回答仅引用本次决策核算事实，未提供的数据不会编造。")
                 else:
-                    if not get_client().available:
+                    if not (_LLM_IMPORT_OK and get_client().available):
                         st.info("未配置 SCZC_LLM_API_KEY，已展示规则兜底结论；配置 API Key 后即可开放问答。")
                     else:
                         st.info("LLM 问答未成功，已展示规则兜底结论；可稍后重试。")
