@@ -281,8 +281,10 @@ class DataIntegrityChecker:
     """
 
     HASH_RECORD = os.path.join(os.path.dirname(__file__), 'data', '.file_hashes.json')
-    # 哈希记录版本：v2 修复跨平台换行符差异（CRLF vs LF），旧记录自动失效重建
-    _HASH_VERSION = 2
+    # 哈希记录版本：
+    #   v2 修复跨平台换行符差异（CRLF vs LF）
+    #   v3 哈希记录纳入Git版本控制，与数据文件同源提交，确保云端与本地一致
+    _HASH_VERSION = 3
 
     @classmethod
     def compute_hash(cls, file_path: str) -> str:
@@ -354,6 +356,27 @@ class DataIntegrityChecker:
 
         # 移除版本标记键，只保留文件哈希
         recorded = {k: v for k, v in recorded.items() if k != '_version'}
+
+        # 检查磁盘上的实际数据文件数量是否与记录一致
+        # 新增数据文件后未更新哈希记录时，自动重建以纳入新文件
+        actual_files = {
+            f for f in os.listdir(data_dir)
+            if f.endswith(('.csv', '.json'))
+            and not f.startswith('.')
+            and f not in cls._HASH_EXCLUDE
+        }
+        if set(recorded.keys()) != actual_files:
+            security_logger.info(
+                f"数据文件集合不一致(记录{len(recorded)}个 vs 磁盘{len(actual_files)}个)，自动重建"
+            )
+            os.remove(cls.HASH_RECORD)
+            hashes = cls.record_hashes(data_dir)
+            return {
+                "status": "ok",
+                "message": "数据文件集合变更，哈希记录已重建",
+                "checked": len(hashes) - 1, "passed": len(hashes) - 1,
+                "failed": [], "missing": []
+            }
 
         checked, passed, failed, missing = 0, 0, [], []
 

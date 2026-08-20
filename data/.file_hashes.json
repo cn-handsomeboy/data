@@ -1,0 +1,14 @@
+{
+  "asean_climate_normals.json": "b7b6111f1e424fc707caf8fae03627357948af83cb93f45e9c4e42d43d996b4f",
+  "asean_yield_weather.csv": "e00151ff5c9796f53ed02392c5dd9962aed64ba800c7b676962c12dfcd0510d1",
+  "byproduct_params.csv": "c9d08161d6613302c28296735c0ccad852a50bdc8276fbcfad3888b8d5029517",
+  "carbon_price.csv": "af263cec52bbff0042b96e0414abdcffd91e4b1491a528dd0de47bf9ccb4c358",
+  "fao_global.csv": "5ef0d8e1395c7455d1442ac91e68d5280cdffe9ba7e75f8e22677db559a38d72",
+  "guangxi_sugarcane.csv": "6b33bbd83223b138ccf466ddf3b878d72f2dd27ea5145749b6f52b5a84065516",
+  "ipcc_factors.csv": "9acc355f9304d24053f60f946c3b4762eafc8ea636364263002181471bd0f873",
+  "market_prices.csv": "383924444935fd02c38f5c652eddc677168e1ceb8986e3a31a9023fd33a81c5b",
+  "weather_data.csv": "79b20cf099abc4cb0ee3072e2fedcb96813e3d315ac63bc24618791e0621d2c0",
+  "weather_data_asean.csv": "6cc41ce22d64314ff62d44323475a0c55c6140a6bd40dcb5e9fa052962f5d738",
+  "weather_data_expanded.csv": "ca9bd4d0cb35a08fe891b719863ca07d60e5b22275c65f0aaf6b04e250707dfd",
+  "_version": 3
+}
