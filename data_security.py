@@ -281,14 +281,16 @@ class DataIntegrityChecker:
     """
 
     HASH_RECORD = os.path.join(os.path.dirname(__file__), 'data', '.file_hashes.json')
+    # 哈希记录版本：v2 修复跨平台换行符差异（CRLF vs LF），旧记录自动失效重建
+    _HASH_VERSION = 2
 
     @classmethod
     def compute_hash(cls, file_path: str) -> str:
-        """计算文件SHA-256哈希"""
+        """计算文件SHA-256哈希（归一化换行符，跨平台一致）"""
         sha256 = hashlib.sha256()
         with open(file_path, 'rb') as f:
             for chunk in iter(lambda: f.read(8192), b""):
-                sha256.update(chunk)
+                sha256.update(chunk.replace(b'\r\n', b'\n').replace(b'\r', b'\n'))
         return sha256.hexdigest()
 
     # 运行时/元数据文件不纳入完整性校验（内容会变化，导致误报）
@@ -304,10 +306,11 @@ class DataIntegrityChecker:
                 fpath = os.path.join(data_dir, fname)
                 hashes[fname] = cls.compute_hash(fpath)
 
+        hashes['_version'] = cls._HASH_VERSION
         with open(cls.HASH_RECORD, 'w', encoding='utf-8') as f:
             json.dump(hashes, f, ensure_ascii=False, indent=2)
 
-        security_logger.info(f"已记录 {len(hashes)} 个数据文件哈希指纹")
+        security_logger.info(f"已记录 {len(hashes) - 1} 个数据文件哈希指纹")
         return hashes
 
     @classmethod
@@ -332,11 +335,25 @@ class DataIntegrityChecker:
             return {
                 "status": "ok",
                 "message": "首次运行，已自动生成哈希指纹",
-                "checked": len(hashes), "passed": len(hashes), "failed": [], "missing": []
+                "checked": len(hashes) - 1, "passed": len(hashes) - 1, "failed": [], "missing": []
             }
 
         with open(cls.HASH_RECORD, 'r', encoding='utf-8') as f:
             recorded = json.load(f)
+
+        # 版本不匹配（旧格式/跨平台换行符差异）→ 删除旧记录并重建
+        if recorded.get('_version') != cls._HASH_VERSION:
+            security_logger.info(f"哈希记录版本不匹配(v{recorded.get('_version', '?')}→v{cls._HASH_VERSION})，自动重建")
+            os.remove(cls.HASH_RECORD)
+            hashes = cls.record_hashes(data_dir)
+            return {
+                "status": "ok",
+                "message": "哈希记录已升级重建",
+                "checked": len(hashes) - 1, "passed": len(hashes) - 1, "failed": [], "missing": []
+            }
+
+        # 移除版本标记键，只保留文件哈希
+        recorded = {k: v for k, v in recorded.items() if k != '_version'}
 
         checked, passed, failed, missing = 0, 0, [], []
 
