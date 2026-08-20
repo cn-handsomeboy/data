@@ -8,6 +8,9 @@ build/
 # Trained model files (in repo for cold-start speed; fallback retrain if version mismatch)
 models/*.hash
 
+# Data integrity hash record (platform-specific line endings; auto-generated on first run)
+data/.file_hashes.json
+
 # IDE
 .vscode/
 .idea/

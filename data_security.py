@@ -291,13 +291,16 @@ class DataIntegrityChecker:
                 sha256.update(chunk)
         return sha256.hexdigest()
 
+    # 运行时/元数据文件不纳入完整性校验（内容会变化，导致误报）
+    _HASH_EXCLUDE = {'user_feedback.json', 'data_expansion_summary.json'}
+
     @classmethod
     def record_hashes(cls, data_dir: Optional[str] = None) -> Dict[str, str]:
-        """记录所有数据文件的哈希值"""
+        """记录所有数据文件的哈希值（CSV + JSON 数据文件）"""
         data_dir = data_dir or os.path.join(os.path.dirname(__file__), 'data')
         hashes = {}
         for fname in os.listdir(data_dir):
-            if fname.endswith('.csv'):
+            if fname.endswith(('.csv', '.json')) and not fname.startswith('.') and fname not in cls._HASH_EXCLUDE:
                 fpath = os.path.join(data_dir, fname)
                 hashes[fname] = cls.compute_hash(fpath)
 
@@ -325,11 +328,11 @@ class DataIntegrityChecker:
 
         if not os.path.exists(cls.HASH_RECORD):
             # 首次运行，自动记录
-            cls.record_hashes(data_dir)
+            hashes = cls.record_hashes(data_dir)
             return {
                 "status": "ok",
                 "message": "首次运行，已自动生成哈希指纹",
-                "checked": 0, "passed": 0, "failed": [], "missing": []
+                "checked": len(hashes), "passed": len(hashes), "failed": [], "missing": []
             }
 
         with open(cls.HASH_RECORD, 'r', encoding='utf-8') as f:
