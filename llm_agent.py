@@ -32,6 +32,15 @@ import time
 import urllib.error
 import urllib.request
 
+# 自动加载 .env 文件（本地开发时从文件读取，云端则由 Secrets 注入环境变量）
+try:
+    from dotenv import load_dotenv
+    _dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(_dotenv_path):
+        load_dotenv(_dotenv_path)
+except Exception:
+    pass
+
 logger = logging.getLogger("llm_agent")
 
 _ENABLE_LLM_ENV = "SCZC_LLM_API_KEY"
