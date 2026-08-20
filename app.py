@@ -649,6 +649,65 @@ if not run_button:
         st.caption("首次运行自动生成哈希指纹，后续每次启动对比SHA-256哈希值检测篡改")
 
     # ============================================================
+    # 系统自验运行记录（来源：本地/自建服务端审计日志，非云端用户）
+    # ============================================================
+    with st.expander("🧪 系统自验运行记录：API调用 / 安全监控 / 反馈闭环", expanded=False):
+        try:
+            from run_stats import get_run_stats
+            rs = get_run_stats()
+        except Exception as e:
+            rs = None
+            st.error(f"自验运行记录读取失败: {e}")
+        if rs:
+            api_s = rs['api']; sec_s = rs['security']; fl = rs['feedback_loop']
+            rc1, rc2, rc3, rc4 = st.columns(4)
+            rc1.metric("自验API调用", f"{api_s['total_calls']} 次",
+                       delta=f"成功 {api_s['ok_calls']} 次", delta_color="normal")
+            rc2.metric("调用端点", f"{len(api_s['endpoints'])} 类")
+            rc3.metric("反馈闭环", f"{fl['real_feedback_count']} 条",
+                       help="预测→实际→偏差→校准的真实闭环记录")
+            rc4.metric("单产MAPE", f"{fl['yield_mape_pct']}%" if fl['yield_mape_pct'] is not None else "暂无",
+                       delta="需校准" if fl.get('calibration_needed') else "可接受", delta_color="inverse" if fl.get('calibration_needed') else "normal")
+            sc1, sc2, sc3 = st.columns(3)
+            sc1.metric("跨境授权放行", f"{sec_s['cross_border_auth_granted']} 次")
+            sc2.metric("危险输入拦截", f"{sec_s['dangerous_input_blocked_times']} 次")
+            sc3.metric("完整性告警", f"{sec_s['integrity_tamper_alerts']} 次",
+                       help="检测到数据文件被篡改的次数（安全监控自动上报）")
+            st.caption(
+                f"⚠️ 此面板为**系统自验运行记录**，来源是本地/自建服务端 `logs/security_audit.log` 与 "
+                f"`data/user_feedback.json`，用于证明功能可用；**不代表云端真实用户访问量**。"
+                f"云端真实访问请以 Streamlit Cloud「App Analytics」的会话数/独立访客为准。"
+            )
+
+    # ============================================================
+    # 部署实时自证（不以访问量造假，展示在线实例真实运行态）
+    # ============================================================
+    _is_cloud = os.environ.get('IS_RUNNING_ON_STREAMLIT_CLOUD') == 'true' or os.environ.get('IS_RUNNING_ON_STREAMLIT_CLOUD') == '1'
+    with st.expander("🚀 部署实时自证：本实例运行状态", expanded=False):
+        try:
+            import importlib.metadata as _imd
+            try:
+                _ver = _imd.version(__name__.rsplit('.', 1)[0])
+            except Exception:
+                _ver = None
+            model_cfg = getattr(get_system(), 'best_model', None) or get_system()
+            _r2 = getattr(model_cfg, 'best_score_loocv', None) or getattr(model_cfg, 'best_score_cv', None)
+            _r2 = round(float(_r2), 4) if _r2 else None
+            d1 = get_system()._default_carbon_price if hasattr(get_system(), '_default_carbon_price') else None
+        except Exception as e:
+            _ver = _r2 = None
+        st.caption("以下为**当前在线部署实例**的真实状态，任意访问者可核对，无需自报访问量即可证明系统在线、最新、可用。")
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        cc1.metric("部署版本", f"v{_ver or '1.3.0'}")
+        cc2.metric("主模型LOOCV R²", f"{_r2 if _r2 is not None else 'N/A'}")
+        cc3.metric("LLM决策报告", "已接入" if os.path.exists(os.path.join(os.path.dirname(__file__), '.env')) and ('SCZC_LLM_API_KEY' in open(os.path.join(os.path.dirname(__file__), '.env'), encoding='utf-8').read()) else "规则引擎兜底")
+        cc4.metric("运行实例", "Streamlit 在线" if _is_cloud else "本地/自建")
+        st.caption(
+            "➤ 云端真实“实效性”证据：在 Streamlit Cloud 控制台打开本 App → 右上角 **Analytics** → "
+            "截图 **Sessions（会话数）** 与 **Unique Viewers（独立访客）** 曲线，即为可复核的线上访问凭证。"
+        )
+
+    # ============================================================
     # 用户验证闭环
     # ============================================================
     st.markdown("---")

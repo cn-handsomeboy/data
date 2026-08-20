@@ -14,7 +14,8 @@ from models import (
     CarbonCalculator,
     EconomicCalculator,
     OptimizationEngine,
-    DATA_DIR
+    DATA_DIR,
+    load_data,
 )
 import pandas as pd
 
@@ -29,9 +30,9 @@ def test_yield_predictor():
     predictor = YieldPredictor()
 
     # 加载数据并训练（自动选择最优模型）
-    gx = pd.read_csv(os.path.join(DATA_DIR, 'guangxi_sugarcane.csv'))
-    weather = pd.read_csv(os.path.join(DATA_DIR, 'weather_data.csv'))
-    
+    # 使用 load_data() 以优先加载扩展气象数据（9 维变量），与线上部署口径一致
+    gx, weather, *_ = load_data()
+
     metrics = predictor.train(gx, weather, model_type='auto')
     
     assert not metrics.get('fallback', True), "模型应该真正训练，不应触发fallback"
@@ -584,8 +585,7 @@ def test_shap_data_consistency():
     predictor = YieldPredictor()
     # 尝试加载已保存的模型（避免重复训练）
     if not predictor.load_model():
-        gx = pd.read_csv(os.path.join(DATA_DIR, 'guangxi_sugarcane.csv'))
-        weather = pd.read_csv(os.path.join(DATA_DIR, 'weather_data.csv'))
+        gx, weather, *_ = load_data()
         predictor.train(gx, weather, model_type='auto')
 
     # 13.1 SHAP解释与预测值一致性

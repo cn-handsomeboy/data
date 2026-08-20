@@ -1,0 +1,66 @@
+{
+  "source": "Open-Meteo ERA5 再分析",
+  "years": "2010-2024",
+  "growing_season_months": [
+    5,
+    10
+  ],
+  "agg": "每国2主产蔗区平均；气候基准取 2015-2024 生长季逐年后的均值",
+  "units": {
+    "avg_temp_c": "℃(生长季平均)",
+    "precipitation_mm": "mm(生长季累计/年)",
+    "sunshine_hours": "h(生长季累计/年)",
+    "humidity_pct": "%",
+    "pressure_hpa": "hPa",
+    "wind_speed_ms": "m/s",
+    "evapotranspiration_mm": "mm(生长季累计/年)",
+    "soil_temp_c": "℃",
+    "soil_moisture_m3m3": "m³/m³"
+  },
+  "normals": {
+    "Laos": {
+      "avg_temp_c": 26.893,
+      "precipitation_mm": 1803.055,
+      "sunshine_hours": 1623.07,
+      "humidity_pct": 83.809,
+      "pressure_hpa": 993.699,
+      "wind_speed_ms": 7.942,
+      "evapotranspiration_mm": 682.926,
+      "soil_temp_c": 27.762,
+      "soil_moisture_m3m3": 0.408
+    },
+    "Myanmar": {
+      "avg_temp_c": 27.072,
+      "precipitation_mm": 2478.38,
+      "sunshine_hours": 1270.662,
+      "humidity_pct": 86.975,
+      "pressure_hpa": 1006.262,
+      "wind_speed_ms": 7.945,
+      "evapotranspiration_mm": 572.974,
+      "soil_temp_c": 28.217,
+      "soil_moisture_m3m3": 0.387
+    },
+    "Thailand": {
+      "avg_temp_c": 27.887,
+      "precipitation_mm": 1117.87,
+      "sunshine_hours": 1667.708,
+      "humidity_pct": 75.98,
+      "pressure_hpa": 988.033,
+      "wind_speed_ms": 8.908,
+      "evapotranspiration_mm": 783.768,
+      "soil_temp_c": 29.36,
+      "soil_moisture_m3m3": 0.414
+    },
+    "Vietnam": {
+      "avg_temp_c": 27.97,
+      "precipitation_mm": 1627.14,
+      "sunshine_hours": 1652.509,
+      "humidity_pct": 81.131,
+      "pressure_hpa": 1005.836,
+      "wind_speed_ms": 8.365,
+      "evapotranspiration_mm": 751.623,
+      "soil_temp_c": 29.395,
+      "soil_moisture_m3m3": 0.436
+    }
+  }
+}

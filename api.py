@@ -81,7 +81,7 @@ app = FastAPI(
 
 石杰锋等 (2023) 《智慧农业(中英文)》DOI: 10.12133/j.smartag.SA202304004
     """,
-    version="1.1.0",
+    version="1.3.0",
     docs_url="/docs" if os.environ.get("SCZC_ENABLE_DOCS", "true").lower() == "true" else None,
     redoc_url="/redoc" if os.environ.get("SCZC_ENABLE_DOCS", "true").lower() == "true" else None,
     openapi_tags=[
@@ -248,7 +248,7 @@ async def health_check():
     return {
         "status": "ok",
         "service": "蔗循智策 API",
-        "version": "1.1.0",
+        "version": "1.3.0",
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -610,6 +610,224 @@ async def run_decision_get(
 
 
 # ---------------------------------------------------------------------------
+# LLM 增强接口（决策报告 + 自然语言问数）
+# 核心计算仍由规则引擎/统计模型完成；LLM 仅负责报告润色与开放式答疑。
+# 未配置 SCZC_LLM_API_KEY 时，这些接口自动回退：llm_used=False，功能不中断。
+# ---------------------------------------------------------------------------
+
+class ReportRequest(DecisionRequest):
+    """决策报告请求（含可选 LLM 润色）"""
+    use_llm: bool = Field(
+        default=True, description="是否尝试用 LLM 生成自然语言报告（无 key 时自动回退规则模板）"
+    )
+
+
+class AskRequest(BaseModel):
+    """自然语言问数请求"""
+    question: str = Field(..., description="开放式问题", examples=["蔗渣生物质颗粒为什么能赚钱？"])
+    use_llm: bool = Field(default=True, description="是否尝试用 LLM 作答")
+    country: str = Field(default="China", description="国家")
+    city: str = Field(default="崇左市", description="广西城市")
+    area_mu: float = Field(default=10.0, ge=0.0, le=100000.0, description="种植面积（亩）")
+    avg_temp: float = Field(default=28.0, ge=10.0, le=45.0, description="生长季均温（℃）")
+    precipitation: float = Field(default=900.0, ge=0.0, le=5000.0, description="生长季累计降水（mm）")
+    sunshine: float = Field(default=870.0, ge=0.0, le=3000.0, description="生长季累计日照（h）")
+    carbon_price: float | None = Field(default=None, description="碳价（元/吨，缺省取市场均价）")
+
+
+_DECISION_SCHEME_CN = {
+    "traditional": "传统模式", "improved_traditional": "改良传统",
+    "circular_basic": "基础循环", "circular_advanced": "进阶循环",
+    "circular_optimal": "最优循环",
+}
+
+
+@app.post("/api/report", tags=["数据产品"])
+async def run_report(
+    request: ReportRequest,
+    api_key: str = Depends(verify_api_key),
+    req: Request = None
+):
+    """
+    生成决策报告（可选 LLM 润色）
+
+    在 /api/decision 的结构化结果之上，额外返回推理链 reasoning；
+    当 use_llm=true 且系统已配置 LLM 服务时，返回 llm_report（自然语言报告）
+    与 llm_used=true；否则 llm_used=false，llm_report 为 null，调用方可回退规则模板。
+    """
+    from agent import generate_reasoning_chain
+    from llm_agent import enhance_decision_report, get_client
+
+    system = get_system()
+    client_ip = _get_client_ip(req) if req is not None else "0.0.0.0"
+    llm_available = get_client().available
+
+    try:
+        validated_city = InputValidator.validate_city(request.city)
+        validated_country = InputValidator.sanitize_string(request.country, max_length=50)
+        result = system.run_decision(
+            area_mu=request.area_mu,
+            avg_temp=request.avg_temp,
+            precipitation=request.precipitation,
+            sunshine=request.sunshine,
+            fertilizer_n_kg=request.fertilizer_n_kg,
+            diesel_l=request.diesel_l,
+            electricity_kwh=request.electricity_kwh,
+            carbon_price=request.carbon_price,
+            country=validated_country,
+            city=validated_city,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        AuditLogger.log_security_event(
+            event_type="decision_error", severity="HIGH",
+            description="决策报告接口计算异常",
+            details={"error": str(e), "country": request.country},
+        )
+        raise HTTPException(status_code=500, detail="决策计算失败，请检查输入或联系管理员")
+
+    opt = result["optimization"]["optimal"]
+    params = {
+        "country": validated_country, "city": validated_city,
+        "area_mu": request.area_mu, "avg_temp": request.avg_temp,
+        "precipitation": request.precipitation, "sunshine": request.sunshine,
+        "carbon_price": request.carbon_price,
+    }
+    reasoning = generate_reasoning_chain(result, params, system)
+
+    # LLM 报告（失败自动返回 None）
+    llm_report = None
+    llm_used = False
+    if request.use_llm and llm_available:
+        llm_report = enhance_decision_report(params, result, reasoning)
+        if llm_report:
+            llm_used = True
+
+    output = {
+        "optimal_scheme": {
+            "name": opt["name"],
+            "name_cn": _DECISION_SCHEME_CN.get(opt["name"], opt["name"]),
+            "net_benefit": round(opt["net_benefit"], 2),
+            "total_benefit": round(opt.get("total_benefit", opt["net_benefit"]), 2),
+            "carbon_revenue": round(opt.get("carbon_revenue", 0), 2),
+        },
+        "yield_per_mu": round(result["yield_per_mu"], 2),
+        "total_yield": round(result["total_yield"], 2),
+        "carbon_total_tons": round(result["carbon_emission"]["total_tons"], 4),
+    }
+
+    AuditLogger.log_api_access(
+        endpoint="/api/report", client_ip=client_ip, api_key=api_key,
+        params={"city": validated_city, "country": validated_country},
+        status_code=200, response_size=0, duration_ms=0, country=validated_country,
+    )
+
+    return {
+        "project": "蔗循智策",
+        "timestamp": datetime.now().isoformat(),
+        "input": request.model_dump(),
+        "output": output,
+        "reasoning": reasoning,
+        "llm_report": llm_report,
+        "llm_used": llm_used,
+        "llm_available": llm_available,
+    }
+
+
+@app.post("/api/ask", tags=["数据产品"])
+async def ask_question(
+    request: AskRequest,
+    api_key: str = Depends(verify_api_key),
+    req: Request = None
+):
+    """
+    自然语言问数（可选用 LLM 作答）
+
+    基于给定（或默认）场景工况运行一次确定性决策作为事实上下文，
+    再让 LLM 回答开放式问题。未配置 LLM 时返回规则兜底，use_llm=false。
+    """
+    from agent import (SugarcaneAgent, FERTILIZER_N_PER_MU, DIESEL_PER_MU,
+                       ELECTRICITY_PER_MU)
+    from llm_agent import get_client
+
+    client_ip = _get_client_ip(req) if req is not None else "0.0.0.0"
+    llm_available = get_client().available
+    question = InputValidator.sanitize_string(request.question, max_length=1000)
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    try:
+        validated_city = InputValidator.validate_city(request.city)
+        validated_country = InputValidator.sanitize_string(request.country, max_length=50)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    agent = SugarcaneAgent(system=get_system())
+    params = {
+        "area_mu": request.area_mu, "city": validated_city, "country": validated_country,
+        "avg_temp": request.avg_temp, "precipitation": request.precipitation,
+        "sunshine": request.sunshine,
+        "carbon_price": (request.carbon_price if request.carbon_price is not None
+                         else agent.default_carbon_price),
+    }
+    result = agent.system.run_decision(
+        area_mu=params["area_mu"], avg_temp=params["avg_temp"],
+        precipitation=params["precipitation"], sunshine=params["sunshine"],
+        fertilizer_n_kg=FERTILIZER_N_PER_MU * params["area_mu"],
+        diesel_l=DIESEL_PER_MU * params["area_mu"],
+        electricity_kwh=ELECTRICITY_PER_MU * params["area_mu"],
+        carbon_price=params["carbon_price"],
+        country=params["country"], city=params["city"],
+    )
+
+    if request.use_llm and llm_available:
+        try:
+            from llm_agent import answer_question as _llm_answer
+            answer = _llm_answer(question, params, result)
+            if answer:
+                AuditLogger.log_api_access(
+                    endpoint="/api/ask", client_ip=client_ip, api_key=api_key,
+                    params={"city": validated_city, "country": validated_country,
+                            "llm": True}, status_code=200, response_size=0,
+                    duration_ms=0, country=validated_country,
+                )
+                return {"question": question, "answer": answer, "use_llm": True,
+                        "llm_available": True, "timestamp": datetime.now().isoformat()}
+        except Exception:
+            pass
+
+    # 规则兜底
+    opt = result["optimization"]["optimal"]
+    fallback = (
+        "当前未启用语言模型服务（未配置 SCZC_LLM_API_KEY 或调用失败），"
+        "无法开放作答。为你提供本次决策的确定性结论：\n\n"
+        f"- 最优方案：{_DECISION_SCHEME_CN.get(opt['name'], opt['name'])}，"
+        f"综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元\n"
+        f"- 净收益：{opt['net_benefit']:,.0f} 元，碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元\n\n"
+        "配置 SCZC_LLM_API_KEY 后可对子方案、碳减排原理、副产物利用路径等进行开放问答。"
+    )
+    AuditLogger.log_api_access(
+        endpoint="/api/ask", client_ip=client_ip, api_key=api_key,
+        params={"city": validated_city, "country": validated_country, "llm": False},
+        status_code=200, response_size=0, duration_ms=0, country=validated_country,
+    )
+    return {"question": question, "answer": fallback, "use_llm": False,
+            "llm_available": llm_available, "timestamp": datetime.now().isoformat()}
+
+
+@app.get("/api/llm/status", tags=["系统"])
+async def llm_status(api_key: str = Depends(verify_api_key)):
+    """获取 LLM 增强服务状态（是否已配置，供前端展示增强开关）"""
+    from llm_agent import get_client
+    return {
+        "llm_configured": get_client().available,
+        "note": "LLM 仅负责报告润色与开放式答疑，不参与核心计算",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # 三证一价与数据要素接口
 # ---------------------------------------------------------------------------
 
@@ -772,13 +990,26 @@ async def get_validation_stats(api_key: str = Depends(verify_api_key)):
     }
 
 
+@app.get("/api/run/stats", tags=["数据产品"])
+async def get_run_stats(api_key: str = Depends(verify_api_key)):
+    """
+    获取系统真实运行台账统计
+
+    聚合真实审计日志（API调用次数/端点/客户端IP/安全拦截/跨境授权）
+    与真实反馈闭环（反馈条数/MAPE/是否需校准）。所有数字直接来自
+    logs/security_audit.log 与 data/user_feedback.json，可溯源、无模拟注入。
+    """
+    from run_stats import get_run_stats
+    return get_run_stats()
+
+
 # ---------------------------------------------------------------------------
 # 启动入口
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("""
     ╔══════════════════════════════════════════════════════════╗
-    ║       蔗循智策 - 数据产品 API v1.1.0                    ║
+    ║       蔗循智策 - 数据产品 API v1.3.0                    ║
     ║       面向中国-东盟的甘蔗副产物循环经济决策系统          ║
     ║       支持中国-泰国-越南-缅甸-老挝五国跨境决策          ║
     ╠══════════════════════════════════════════════════════════╣

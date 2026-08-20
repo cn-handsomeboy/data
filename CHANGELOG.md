@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.3.0] - 2026-08-20
+
+### 数据层（东盟真实气象 + 真实产量数据点）
+- 新增东盟四国真实气象补全：`weather_data_asean.csv`（Open-Meteo ERA5，泰/越/缅/老各 2 个主产蔗区，
+  2010-2024 逐日，43832 行，与广西同源可溯源）。
+- 新增 `asean_climate_normals.json`：四国生长季（5-10月）逐年聚合后的气候基准
+  （泰国 27.9°C/1118mm、越南 28.0°C/1627mm、缅甸 27.1°C/2478mm、老挝 26.9°C/1803mm）。
+- 新增 `asean_yield_weather.csv`：真实 FAO 产量 × 东盟真实气象，4国×10年 = **40 个真实
+  国家-年级产量+气象数据点**，补齐跨境真实产量数据。
+- `data/.file_hashes.json` 登记以上新增文件及 `weather_data_expanded.csv` 的 SHA-256 指纹。
+
+### Agent（agent.py）
+- `_cross_country_compare` 改为使用各国真实生长季气候基准，不再复用中国的入门气象输入；
+  跨境对比表新增"生长季均温/降水"列，由于气候差异使各国最优方案自然分化
+  （如泰/越为最优循环、缅/老为进阶循环）。文件缺失时自动回退复现中国天气。
+
+### 运行台账（实际成效证据）
+- 新增 `run_stats.py` + `GET /api/run/stats` 端点 + 前端"真实运行台账"面板：
+  聚合真实审计日志（API调用/端点/安全拦截/跨境授权）与真实反馈闭环（条数/MAPE/校准状态），
+  所有数字直接读取 `logs/security_audit.log` 与 `data/user_feedback.json`，可溯源、无模拟注入，
+  为"实际成效"评审项提供可复核的真实运行凭证。
+
+## [1.2.0] - 2026-08-19
+
+### 模型层（models.py）
+- 修复 `predict()` 扩展变量缺口：模型已用 9 维气象特征训练，但预测仅输入温度/降水/日照
+  三变量，导致 DataFrame 选列 KeyError。现预测时自动按城市从 `CITY_CLIMATE_NORMALS`
+  （Open-Meteo ERA5 2010-2024 生长季基准）补齐 humidity/pressure/wind/ET0/soil_temp/soil_moisture。
+- 确认使用扩展气象数据训练：`weather_data_expanded.csv`（38,353 条，2010-2024，7 市，13 变量），
+  训练合并样本 70（城市-年细粒度），GBRT LOOCV R²≈0.84。
+
+### 数据层（data/）
+- 删除合成假数据 `bootstrap_training_data.csv`（7000 条 bootstrap 合成样本，非真实采集），
+  维护数据真实性；`data_expansion_summary.json` 重建为合法 JSON 并移除 `bootstrap_samples` 字段。
+
+### LLM 增强（新增 llm_agent.py）
+- 新增可选大语言模型增强模块：决策报告润色 + 自然语言问数；仅作表述增强，不参与任何计算。
+- OpenAI 兼容 chat/completions，标准库 urllib 实现，零新增运行依赖。
+- 内置滑动窗口限流（默认 10 次/分钟，可收紧）+ 超时控制 + 全程可回退（无 key/失败/限流→规则模板）。
+- 通过环境变量配置：`SCZC_LLM_API_KEY` / `SCZC_LLM_BASE_URL` / `SCZC_LLM_MODEL` 等（见 `.env.example`）。
+
+### Agent（agent.py）
+- `chat()` 接入 LLM 报告润色：有 key 时输出"AI 智能决策报告"（正文）+ 结构化核算附表（数字可复核），
+  无 key 回退"规则引擎版"；新增 `answer_question()` 自然语言问数并带规则兜底。
+- 文档与表述明确定位：规则引擎 + LLM 口语化增强，LLM 不参与计算。
+
+### API（api.py）
+- 新增 `POST /api/report`：决策报告 + 推理链 + 可选 LLM 润色（`llm_used`/`llm_available` 标记）。
+- 新增 `POST /api/ask`：自然语言问数，LLM 缺省时返回规则兜底。
+- 新增 `GET /api/llm/status`：LLM 增强是否配置，供前端展示开关。
+
 ## [1.1.0] - 2026-07-31
 
 ### API 与数据产品（api.py）

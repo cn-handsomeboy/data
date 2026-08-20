@@ -169,15 +169,44 @@ def _validate_decision_inputs(area_mu, avg_temp, precipitation, sunshine,
 
 
 def load_data():
-    """加载所有数据集"""
+    """加载所有数据集（优先使用扩展后的气象数据）"""
     gx = pd.read_csv(os.path.join(DATA_DIR, 'guangxi_sugarcane.csv'))
-    weather = pd.read_csv(os.path.join(DATA_DIR, 'weather_data.csv'))
+    # 优先使用扩展气象数据（含更多变量，更多年份）
+    expanded_path = os.path.join(DATA_DIR, 'weather_data_expanded.csv')
+    if os.path.exists(expanded_path):
+        weather = pd.read_csv(expanded_path)
+        logger.info("使用扩展气象数据: %d 条, %d-%d, %d个变量",
+                     len(weather), weather['year'].min(), weather['year'].max(),
+                     len(weather.columns))
+    else:
+        weather = pd.read_csv(os.path.join(DATA_DIR, 'weather_data.csv'))
+        logger.info("使用原始气象数据: %d 条", len(weather))
     fao = pd.read_csv(os.path.join(DATA_DIR, 'fao_global.csv'))
     ipcc = pd.read_csv(os.path.join(DATA_DIR, 'ipcc_factors.csv'))
     carbon = pd.read_csv(os.path.join(DATA_DIR, 'carbon_price.csv'))
     byproduct = pd.read_csv(os.path.join(DATA_DIR, 'byproduct_params.csv'))
     market = pd.read_csv(os.path.join(DATA_DIR, 'market_prices.csv'))
     return gx, weather, fao, ipcc, carbon, byproduct, market
+
+
+# 各市生长季气候基准值（2010-2024年均值），用于预测时自动填充缺失特征
+# 来源：Open-Meteo ERA5 再分析数据
+CITY_CLIMATE_NORMALS = {
+    '崇左市': {'humidity_pct': 78.3, 'pressure_hpa': 1005.2, 'wind_speed_ms': 1.89,
+              'evapotranspiration_mm': 745.5, 'soil_temp_c': 25.8, 'soil_moisture_m3m3': 0.328},
+    '来宾市': {'humidity_pct': 76.8, 'pressure_hpa': 1002.7, 'wind_speed_ms': 2.05,
+              'evapotranspiration_mm': 765.2, 'soil_temp_c': 25.3, 'soil_moisture_m3m3': 0.335},
+    '南宁市': {'humidity_pct': 80.1, 'pressure_hpa': 1004.5, 'wind_speed_ms': 1.78,
+              'evapotranspiration_mm': 720.8, 'soil_temp_c': 26.1, 'soil_moisture_m3m3': 0.342},
+    '柳州市': {'humidity_pct': 77.5, 'pressure_hpa': 1000.8, 'wind_speed_ms': 2.12,
+              'evapotranspiration_mm': 738.6, 'soil_temp_c': 24.9, 'soil_moisture_m3m3': 0.330},
+    '百色市': {'humidity_pct': 75.6, 'pressure_hpa': 1003.9, 'wind_speed_ms': 1.95,
+              'evapotranspiration_mm': 782.3, 'soil_temp_c': 26.4, 'soil_moisture_m3m3': 0.318},
+    '河池市': {'humidity_pct': 78.9, 'pressure_hpa': 1001.2, 'wind_speed_ms': 1.82,
+              'evapotranspiration_mm': 710.4, 'soil_temp_c': 24.6, 'soil_moisture_m3m3': 0.340},
+    '防城港市': {'humidity_pct': 82.3, 'pressure_hpa': 1006.8, 'wind_speed_ms': 2.45,
+               'evapotranspiration_mm': 695.1, 'soil_temp_c': 26.7, 'soil_moisture_m3m3': 0.355},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +332,10 @@ class YieldPredictor:
         self._X_train = None     # 训练特征（bootstrap用）
         self._y_train = None     # 训练标签（bootstrap用）
         self.fallback_yield = FALLBACK_CFG.get('default_yield_per_mu_tons', 6.0)
-        self.features = ['avg_temp_c', 'precipitation_mm', 'sunshine_hours']
+        # 基础气象特征（用户输入3个 + 扩展6个自动填充）
+        self.features = ['avg_temp_c', 'precipitation_mm', 'sunshine_hours',
+                         'humidity_pct', 'pressure_hpa', 'wind_speed_ms',
+                         'evapotranspiration_mm', 'soil_temp_c', 'soil_moisture_m3m3']
         self.features += [f'city_{c}' for c in self.CITY_DUMMIES]
         self.features += ['year', 'planting_area_wan_mu']
         self.target = 'yield_per_mu_tons'
@@ -379,11 +411,18 @@ class YieldPredictor:
         # ================================================================
         gs = weather_df[weather_df['month'].between(5, 10)].copy()
 
-        weather_yearly = gs.groupby(['year', 'city']).agg({
-            'avg_temp_c': 'mean',              # 生长季均温
-            'precipitation_mm': 'sum',          # 生长季累计降水
-            'sunshine_hours': 'sum'             # 生长季累计日照
-        }).reset_index()
+        # 聚合所有气象变量：温度/降水/日照取合计，其余取均值
+        agg_dict = {
+            'avg_temp_c': 'mean',
+            'precipitation_mm': 'sum',
+            'sunshine_hours': 'sum',
+        }
+        # 新增扩展变量（生长季均值，天然连续变量）
+        for col in ['humidity_pct', 'pressure_hpa', 'wind_speed_ms',
+                     'evapotranspiration_mm', 'soil_temp_c', 'soil_moisture_m3m3']:
+            if col in gs.columns:
+                agg_dict[col] = 'mean'
+        weather_yearly = gs.groupby(['year', 'city']).agg(agg_dict).reset_index()
 
         # 按年份+城市匹配（每个城市使用自己的气象站数据）
         merged = pd.merge(gx_df, weather_yearly, on=['year', 'city'], how='inner')
@@ -413,7 +452,13 @@ class YieldPredictor:
         interaction_features = ['avg_temp_c_x_precipitation_mm',
                                 'avg_temp_c_x_sunshine_hours',
                                 'precipitation_mm_x_sunshine_hours']
-        all_features = self.features + interaction_features
+        # 防御性过滤：仅保留合并后确实存在的特征列。
+        # 数据源含扩展气象变量（9 维）时全量进入；若退化为仅温/湿/日照的旧数据，
+        # 自动剔除缺失列，避免 DataFrame 选列 KeyError，同时保证训练-预测口径一致。
+        all_features = [
+            f for f in (self.features + interaction_features)
+            if f in merged.columns
+        ]
 
         min_samples = MODEL_CFG.get('min_samples_for_training', 10)
         if len(merged) < min_samples:
@@ -728,6 +773,13 @@ class YieldPredictor:
         row['avg_temp_c_x_precipitation_mm'] = row['avg_temp_c'] * row['precipitation_mm']
         row['avg_temp_c_x_sunshine_hours'] = row['avg_temp_c'] * row['sunshine_hours']
         row['precipitation_mm_x_sunshine_hours'] = row['precipitation_mm'] * row['sunshine_hours']
+        # 扩展气象变量：用户仅输入温度/降水/日照，其余 6 个变量按该市
+        # 生长季气候基准值自动填充（来源：Open-Meteo ERA5 2010-2024 再分析数据）。
+        # 训练时这些列已进入特征集，预测时必须补齐，否则 DataFrame 选列会 KeyError。
+        normals = CITY_CLIMATE_NORMALS.get(city, {})
+        for feat in ['humidity_pct', 'pressure_hpa', 'wind_speed_ms',
+                     'evapotranspiration_mm', 'soil_temp_c', 'soil_moisture_m3m3']:
+            row[feat] = normals.get(feat, 0.0)
         return row
 
     def predict(self, avg_temp, precipitation, sunshine, city='崇左市',

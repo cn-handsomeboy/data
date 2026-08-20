@@ -5,5 +5,9 @@
   "guangxi_sugarcane.csv": "6b33bbd83223b138ccf466ddf3b878d72f2dd27ea5145749b6f52b5a84065516",
   "ipcc_factors.csv": "9acc355f9304d24053f60f946c3b4762eafc8ea636364263002181471bd0f873",
   "market_prices.csv": "0ec7a54022b271dd2e0217880400735609121ef47b0cc8ed93e56f3f4eae0c49",
-  "weather_data.csv": "79b20cf099abc4cb0ee3072e2fedcb96813e3d315ac63bc24618791e0621d2c0"
+  "weather_data.csv": "79b20cf099abc4cb0ee3072e2fedcb96813e3d315ac63bc24618791e0621d2c0",
+  "weather_data_asean.csv": "35c3578a823e3101d69f97464f6cca8000344c571180d88783598d14626ab36a",
+  "asean_yield_weather.csv": "160a9c4b3165bbc196b915179e4ae7236ca1ad109fa999666a16cd559738daab",
+  "asean_climate_normals.json": "bea0137fdaa5a9b16083ae5586f591547354ceac6fbd1c8cc827dea0549d386e",
+  "weather_data_expanded.csv": "e28213c60e386965b4cf606156fb313a2b6db8eafc299f3492e096aefced0e0e"
 }

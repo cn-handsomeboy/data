@@ -1,23 +1,52 @@
 """
-蔗循智策 对话式决策助手（规则引擎版）
+蔗循智策 对话式决策助手（规则引擎 + 可选 LLM 增强）
 
 功能：自然语言输入 → 规则式参数解析（regex + keyword）→ 模型调用 →
 推理链生成 → 自然语言决策报告
 
 技术定位说明（重要）：
-- 当前实现为【规则引擎】而非大模型 Agent：意图识别与参数提取
-  基于正则与关键词匹配，无 LLM 推理能力；
-- 架构预留 LLM API 接口（OpenAI-compatible / Qwen / DeepSeek），
-  可插拔升级为真正的 AI Agent；
-- 对外展示请如实表述为"对话式决策助手（规则引擎）"，
-  避免与"大模型 Agent"混淆。
+- 意图识别与参数提取基于正则与关键词匹配，核心计算由确定性
+  规则引擎 / 统计模型完成，保证结果可复现、可解释；
+- 可选 LLM 增强（见 llm_agent.py）：在计算结果之上提供
+  ① 决策报告润色（结构化结果→给蔗农/糖企/政府的自然语言报告）
+  ② 自然语言问数（基于已核算事实回答开放式提问）。
+  配置 SCZC_LLM_API_KEY 后自动启用；未配置 / 调用失败 / 限流时
+  自动回退到规则模板，系统功能不受影响；
+- 对外展示请如实表述为"对话式决策助手（规则引擎 + LLM 口语化增强）"，
+  LLM 不参与任何计算，仅负责报告的表述润色与答疑。
 """
 
 import json
+import logging
 import os
 import re
 
 from models import SugarcaneDecisionSystem, get_default_carbon_price
+
+logger = logging.getLogger("agent")
+
+# 东盟气候基准缓存（按需加载，见 _load_asean_climate）
+_ASEAN_CLIMATE = None
+_ASEAN_CLIMATE_PATH = os.path.join(os.path.dirname(__file__), 'data', 'asean_climate_normals.json')
+
+
+def _load_asean_climate() -> dict:
+    """按需加载东盟四国生长季气候基准（Open-Meteo ERA5）。
+
+    用于跨境对比：每个国家使用其真实区域气候（温度/降水/日照），
+    而非复用中国的入门气象输入。未找到文件/解析失败时返回空 dict（回退现状）。
+    """
+    global _ASEAN_CLIMATE
+    if _ASEAN_CLIMATE is not None:
+        return _ASEAN_CLIMATE
+    try:
+        with open(_ASEAN_CLIMATE_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        _ASEAN_CLIMATE = data.get('normals', {})
+    except Exception as e:
+        logger.warning("读取东盟气候基准失败，跨境对比回退复用中国天气: %s", e)
+        _ASEAN_CLIMATE = {}
+    return _ASEAN_CLIMATE
 
 # ============================================================
 # 栽培参数（从 config.json 读取）
@@ -383,16 +412,84 @@ class SugarcaneAgent:
         # 推理链
         reasoning = generate_reasoning_chain(result, params, self.system)
 
+        # LLM 增强：决策报告润色（未配置 key / 失败自动返回 None → 规则模板）
+        llm_report = self._enhance_report(params, result, reasoning)
+
         # 跨境对比
         cross = ""
         if 'cross_country' in params['intents'] and params['country'] == 'China':
             cross = self._cross_country_compare(params, result)
 
         # 生成最终回复
-        response = self._format_response(params, result, reasoning, cross)
+        response = self._format_response(params, result, reasoning, cross, llm_report)
         state['history'].append({'role': 'assistant', 'content': response})
         state['last_result'] = result
+        state['last_params'] = params
+        state['llm_report'] = bool(llm_report)
         return response, True, state
+
+    def _enhance_report(self, params: dict, result: dict, reasoning: str):
+        """调用 LLM 润色决策报告；未启用/失败返回 None（保持规则模板）。"""
+        try:
+            from llm_agent import enhance_decision_report
+            return enhance_decision_report(params, result, reasoning)
+        except Exception as e:
+            logger.warning("LLM 报告增强异常，使用规则模板: %s", e)
+            return None
+
+    def answer_question(self, question: str, state: dict = None,
+                        params: dict = None, result: dict = None) -> tuple:
+        """自然语言问数：基于最近一次（或传入的）决策结果回答开放式问题。
+
+        返回 (answer, use_llm)：
+            - answer: 回答文本；LLM 未启用/失败时返回基于规则模板的兜底回复
+            - use_llm: True=LLM 生成，False=规则兜底
+        """
+        # 收集本次问数所需的决策上下文
+        q_params = params
+        q_result = result
+        if state and state.get('last_result') and state.get('last_params'):
+            q_params = q_params or state['last_params']
+            q_result = q_result or state['last_result']
+        # 尚无决策结果：用默认参数跑一次决策作为上下文
+        if q_params is None or q_result is None:
+            q_params = {
+                'area_mu': 10.0, 'city': '崇左市', 'country': 'China',
+                'avg_temp': 28.0, 'precipitation': 900.0,
+                'sunshine': 870.0, 'carbon_price': self.default_carbon_price,
+                'intents': ['recommend'],
+            }
+            q_result = self.system.run_decision(
+                area_mu=q_params['area_mu'],
+                avg_temp=q_params['avg_temp'],
+                precipitation=q_params['precipitation'],
+                sunshine=q_params['sunshine'],
+                fertilizer_n_kg=FERTILIZER_N_PER_MU * q_params['area_mu'],
+                diesel_l=DIESEL_PER_MU * q_params['area_mu'],
+                electricity_kwh=ELECTRICITY_PER_MU * q_params['area_mu'],
+                carbon_price=q_params['carbon_price'],
+                country=q_params['country'],
+                city=q_params['city'],
+            )
+        # LLM 解答
+        try:
+            from llm_agent import answer_question as _llm_answer
+            answer = _llm_answer(question, q_params, q_result)
+            if answer:
+                return answer, True
+        except Exception:
+            pass
+        # 规则兜底：给出可用事实与可答建议
+        opt = q_result['optimization']['optimal']
+        fallback = (
+            "我暂时无法调用语言模型来开放作答（未配置 LLM 服务或调用失败），"
+            "以下是本次决策的确定性结论，供你参考：\n\n"
+            f"- 最优方案：{opt['name']}，综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元\n"
+            f"- 净收益：{opt['net_benefit']:,.0f} 元，碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元\n\n"
+            "配置 SCZC_LLM_API_KEY 后可针对任意子方案、碳减排原理或副产物利用路径"
+            "进行开放问答。想问具体技术细节，请先配置语言模型接口。"
+        )
+        return fallback, False
 
     def _format_collected(self, collected: dict) -> str:
         """格式化已收集参数的可读字符串"""
@@ -426,12 +523,18 @@ class SugarcaneAgent:
         sunshine = max(0.0, min(float(params.get('sunshine', 870.0)), 3000.0))
         carbon_price = max(0.0, min(float(params.get('carbon_price', self.default_carbon_price)), 10000.0))
         city = params.get('city', '崇左市')
+        # 东盟四国真实生长季气候（Open-Meteo ERA5）；缺失时回退复用中国输入
+        asean_climate = _load_asean_climate()
         for c in ['Thailand', 'Vietnam', 'Myanmar', 'Laos']:
+            cli = asean_climate.get(c, {})
+            c_temp = cli.get('avg_temp_c', avg_temp)
+            c_precip = cli.get('precipitation_mm', precipitation)
+            c_sun = cli.get('sunshine_hours', sunshine)
             r = self.system.run_decision(
                 area_mu=area_mu,
-                avg_temp=avg_temp,
-                precipitation=precipitation,
-                sunshine=sunshine,
+                avg_temp=c_temp,
+                precipitation=c_precip,
+                sunshine=c_sun,
                 fertilizer_n_kg=22 * area_mu,
                 diesel_l=5 * area_mu,
                 electricity_kwh=50 * area_mu,
@@ -442,16 +545,17 @@ class SugarcaneAgent:
             src = r.get('yield_source', 'N/A')
             rows.append(
                 f"| {country_names[c]} | {r['yield_per_mu']:.2f} | {src} | "
-                f"{o['total_benefit']:,.0f} | {o['carbon_emission_kg']:+,.0f} |"
+                f"{o['total_benefit']:,.0f} | {o['carbon_emission_kg']:+,.0f} | "
+                f"{c_temp:.1f}°C/{c_precip:.0f}mm |"
             )
         return (
-            f"**跨境对比**\n\n"
-            f"| 国家 | 单产(吨/亩) | 产量来源 | 综合收益(元) | 碳排放(kg) |\n"
-            f"|------|------------|---------|------------|------------|\n"
+            f"**跨境对比**（气象=各国真实生长季基准，Open-Meteo ERA5）\n\n"
+            f"| 国家 | 单产(吨/亩) | 产量来源 | 综合收益(元) | 碳排放(kg) | 生长季均温/降水 |\n"
+            f"|------|------------|---------|------------|------------|----------------|\n"
             + '\n'.join(rows)
         )
 
-    def _format_response(self, params, result, reasoning, cross):
+    def _format_response(self, params, result, reasoning, cross, llm_report=None):
         opt = result['optimization']['optimal']
         model_name = self.system.yield_predictor.metrics.get('model_name', 'ridge')
         r2 = self.system.yield_predictor.metrics.get('r2', 0)
@@ -459,21 +563,37 @@ class SugarcaneAgent:
         yield_src = result.get('yield_source', 'model')
         src_label = 'LOOCV回归模型' if yield_src == 'model' else 'FAO统计均值'
 
-        lines = [
-            f"## 🌱 蔗循智策 决策报告（规则引擎版）",
-            f"",
-            f"> **{params.get('city', '未知')}** {params['area_mu']:.0f}亩 | "
-            f"碳价 {params['carbon_price']:.0f} 元/吨 | 产量来源: {src_label}",
-            f"",
-            reasoning,
-        ]
+        # LLM 增强的报告为正文，结构化推理链作为附表保留（保证数字可复核）
+        if llm_report:
+            header = (
+                f"## 🌱 蔗循智策 智能决策报告（AI）\n\n"
+                f"{llm_report}\n\n"
+                f"---\n\n"
+                f"### 📊 结构化核算（数字可复核）\n"
+            )
+            lines = [
+                header,
+                f"**{params.get('city', '未知')}** {params['area_mu']:.0f}亩 | "
+                f"碳价 {params['carbon_price']:.0f} 元/吨 | 产量来源: {src_label}",
+                "",
+                reasoning,
+            ]
+        else:
+            lines = [
+                f"## 🌱 蔗循智策 决策报告（规则引擎版）",
+                f"",
+                f"> **{params.get('city', '未知')}** {params['area_mu']:.0f}亩 | "
+                f"碳价 {params['carbon_price']:.0f} 元/吨 | 产量来源: {src_label}",
+                f"",
+                reasoning,
+            ]
         if cross:
             lines.append(cross)
         lines.extend([
             "",
             "---",
             f"",
-            f"*推理完成 · 模型 `{model_name.upper()}` LOOCV R²={r2:.3f} | {loocv_n}样本*",
+            f"*推理完成 · 模型 `{model_name.upper()}` LOOCV R²={r2:.3f} | {loocv_n}样本 | LLM增强={'开' if llm_report else '关'}*",
         ])
         return '\n'.join(lines)
 
