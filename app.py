@@ -700,7 +700,8 @@ if not run_button:
         cc1, cc2, cc3, cc4 = st.columns(4)
         cc1.metric("部署版本", f"v{_ver or '1.3.0'}")
         cc2.metric("主模型LOOCV R²", f"{_r2 if _r2 is not None else 'N/A'}")
-        cc3.metric("LLM决策报告", "已接入" if os.path.exists(os.path.join(os.path.dirname(__file__), '.env')) and ('SCZC_LLM_API_KEY' in open(os.path.join(os.path.dirname(__file__), '.env'), encoding='utf-8').read()) else "规则引擎兜底")
+        _llm_key = os.environ.get("SCZC_LLM_API_KEY", "")
+        cc3.metric("LLM决策报告", "已接入" if _llm_key and _llm_key.strip() else "规则引擎兜底")
         cc4.metric("运行实例", "Streamlit 在线" if _is_cloud else "本地/自建")
         st.caption(
             "➤ 云端真实“实效性”证据：在 Streamlit Cloud 控制台打开本 App → 右上角 **Analytics** → "
