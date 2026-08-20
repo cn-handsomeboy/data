@@ -86,6 +86,11 @@ class DataClassifier:
         "carbon_price.csv": (DataClassification.PUBLIC, "none", "上海环交所"),
         "byproduct_params.csv": (DataClassification.INTERNAL, "generalization", "学术文献"),
         "market_prices.csv": (DataClassification.PUBLIC, "none", "1688批发/行业研报"),
+        # 2026年新增：东盟跨境与气象扩充数据集（公开来源：FAOSTAT/Open-Meteo ERA5再分析）
+        "weather_data_expanded.csv": (DataClassification.PUBLIC, "none", "Open-Meteo ERA5再分析"),
+        "weather_data_asean.csv": (DataClassification.PUBLIC, "none", "Open-Meteo ERA5再分析"),
+        "asean_yield_weather.csv": (DataClassification.PUBLIC, "none", "FAOSTAT/Open-Meteo ERA5再分析"),
+        "asean_climate_normals.json": (DataClassification.PUBLIC, "none", "Open-Meteo ERA5再分析"),
     }
 
     @classmethod

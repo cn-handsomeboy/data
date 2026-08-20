@@ -14,6 +14,7 @@ import html
 import json
 import os
 import sys
+import time
 
 import pandas as pd
 import plotly.express as px
@@ -31,7 +32,10 @@ from data_security import (
     DataClassifier, DataMasker, DataIntegrityChecker,
     SecurityManager, get_security_status
 )
-from llm_agent import enhance_decision_report, answer_question
+from llm_agent import (
+    enhance_decision_report, answer_question, get_client,
+    rule_template_report, fallback_answer,
+)
 
 # ============================================================
 # 页面配置
@@ -119,11 +123,43 @@ def get_agent():
 agent = get_agent()
 
 # ============================================================
+# LLM 增强辅助函数（供主流程调用，保证规则兜底与推理链一致）
+# ============================================================
+_SCHEME_CN_APP = {
+    'traditional': '传统模式', 'improved_traditional': '改良传统模式',
+    'circular_basic': '基础循环模式', 'circular_advanced': '进阶循环模式',
+    'circular_optimal': '最优循环模式',
+}
+
+
+def _build_reasoning_chain(result: dict) -> str:
+    """构造本次决策的推理链摘要（供 LLM 引用，保证报告与计算逻辑一致）。"""
+    opt = result['optimization']['optimal']
+    trad = result['optimization']['all_schemes'][-1]
+    improve = (opt['net_benefit'] / max(abs(trad['net_benefit']), 1) - 1) * 100
+    m = (system.yield_predictor.metrics or {})
+    src = 'LOOCV回归模型' if result.get('yield_source') == 'model' else 'FAO统计均值'
+    lines = [
+        f"产量预测: {src} 单产 {result['yield_per_mu']:.2f} 吨/亩，"
+        f"总产 {result['total_yield']:.2f} 吨" +
+        (f"（模型 R²={m.get('r2', 'N/A')}）" if result.get('yield_source') == 'model' else ""),
+        f"推荐依据: 最优方案={_SCHEME_CN_APP.get(opt['name'], opt['name'])}，"
+        f"综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元，"
+        f"净收益 {opt['net_benefit']:,.0f} 元，较传统模式增收 {improve:.0f}%，"
+        f"碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元",
+        f"优化权重: 收益 {result['optimization']['weights']['benefit']:.0%} / "
+        f"碳减排 {result['optimization']['weights']['carbon']:.0%}",
+    ]
+    return "\n".join(lines)
+
+# ============================================================
 # 侧边栏
 # ============================================================
 with st.sidebar:
     st.markdown("### 🌱 参数设置")
     st.caption("部署版本: 2026.08.18 · 精简模型版（固定超参+LOOCV）")
+    _llm_on = bool(os.environ.get("SCZC_LLM_API_KEY", "").strip())
+    st.caption("🤖 LLM 增强: " + ("已接入（报告润色+问数）" if _llm_on else "规则引擎兜底（未配置 API Key）"))
 
     # ---- 从 session_state 读取预置场景参数（需在控件使用前初始化） ----
     preset_area = st.session_state.pop('preset_area', 10.0)
@@ -291,6 +327,9 @@ with st.sidebar:
     )
     st.markdown("---")
     run_button = st.button("🚀 生成决策方案", type="primary", use_container_width=True)
+    if run_button:
+        # 点击后持久保持决策视图（st.button 为一次性状态，避免后续交互跳回首页）
+        st.session_state["run_flag"] = True
 
     with st.expander("📚 数据来源追溯", expanded=False):
         st.markdown("""
@@ -330,7 +369,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-if not run_button:
+if not st.session_state.get("run_flag", False):
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("""
@@ -604,7 +643,7 @@ if not run_button:
         ok_count = sum(1 for c in checks.values() if c['status'] == 'ok')
         st.metric("检查项通过", f"{ok_count}/{len(checks)}")
     with score_col3:
-        st.metric("数据资产数", "7个数据集")
+        st.metric("数据资产数", "11个数据集")
     with score_col4:
         st.metric("合规标准", "GB/T 47949")
 
@@ -686,23 +725,44 @@ if not run_button:
     _is_cloud = os.environ.get('IS_RUNNING_ON_STREAMLIT_CLOUD') == 'true' or os.environ.get('IS_RUNNING_ON_STREAMLIT_CLOUD') == '1'
     with st.expander("🚀 部署实时自证：本实例运行状态", expanded=False):
         try:
-            import importlib.metadata as _imd
-            try:
-                _ver = _imd.version(__name__.rsplit('.', 1)[0])
-            except Exception:
-                _ver = None
-            model_cfg = getattr(get_system(), 'best_model', None) or get_system()
-            _r2 = getattr(model_cfg, 'best_score_loocv', None) or getattr(model_cfg, 'best_score_cv', None)
-            _r2 = round(float(_r2), 4) if _r2 else None
-            d1 = get_system()._default_carbon_price if hasattr(get_system(), '_default_carbon_price') else None
-        except Exception as e:
+            # 版本号：优先读取 VERSION 文件（真实来源），失败再尝试包元数据
+            _ver = None
+            _version_file = os.path.join(os.path.dirname(__file__), 'VERSION')
+            if os.path.exists(_version_file):
+                with open(_version_file, 'r', encoding='utf-8') as _vf:
+                    _ver = _vf.read().strip()
+            if not _ver:
+                import importlib.metadata as _imd
+                try:
+                    _ver = _imd.version(__name__.rsplit('.', 1)[0])
+                except Exception:
+                    _ver = None
+
+            # 主模型指标：真实来源是 yield_predictor.metrics（LOOCV 结果）
+            _m = get_system().yield_predictor.metrics or {}
+            _r2 = _m.get('r2')
+            _r2 = round(float(_r2), 4) if _r2 and not _m.get('fallback') else None
+            _model_name = (_m.get('model_name') or 'N/A').upper() if _r2 else 'N/A'
+            _samples = _m.get('loocv_samples')
+
+            # LLM 状态：与 llm_agent 内部判断一致（available 由 API Key 决定）
+            _llm_on = get_client().available
+            _llm_model = os.environ.get("SCZC_LLM_MODEL", "deepseek-chat")
+        except Exception:
             _ver = _r2 = None
+            _model_name = 'N/A'
+            _samples = None
+            _llm_on = False
+            _llm_model = 'deepseek-chat'
         st.caption("以下为**当前在线部署实例**的真实状态，任意访问者可核对，无需自报访问量即可证明系统在线、最新、可用。")
         cc1, cc2, cc3, cc4 = st.columns(4)
         cc1.metric("部署版本", f"v{_ver or '1.3.0'}")
-        cc2.metric("主模型LOOCV R²", f"{_r2 if _r2 is not None else 'N/A'}")
-        _llm_key = os.environ.get("SCZC_LLM_API_KEY", "")
-        cc3.metric("LLM决策报告", "已接入" if _llm_key and _llm_key.strip() else "规则引擎兜底")
+        _r2_delta = (f"{_model_name} · {_samples}样本" if _r2 is not None and _samples
+                     else (_model_name if _r2 is not None else None))
+        cc2.metric("主模型LOOCV R²", f"{_r2 if _r2 is not None else 'N/A'}",
+                   delta=_r2_delta)
+        cc3.metric("LLM决策报告", "已接入" if _llm_on else "规则引擎兜底",
+                   delta=f"模型 {_llm_model}" if _llm_on else None)
         cc4.metric("运行实例", "Streamlit 在线" if _is_cloud else "本地/自建")
         st.caption(
             "➤ 云端真实“实效性”证据：在 Streamlit Cloud 控制台打开本 App → 右上角 **Analytics** → "
@@ -908,6 +968,12 @@ else:
 
     st.success("✅ 决策方案生成完成")
 
+    # 决策指纹：LLM 报告/问数按指纹缓存，避免每次交互重绘时重复调用 API
+    _fp = "|".join(str(v) for v in [
+        country, city, area_mu, avg_temp, precipitation, sunshine,
+        carbon_price, benefit_weight, carbon_weight, carbon_scenario
+    ])
+
     # ===== 关键指标 =====
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -955,12 +1021,29 @@ else:
                 'precipitation': precipitation, 'sunshine': sunshine,
                 'carbon_price': carbon_price
             }
-            _llm_report = enhance_decision_report(_llm_params, result)
+            _cache_key = f"llm_report_{_fp}"
+            _fail_key = f"{_cache_key}_fail_at"
+            _now = time.time()
+            _llm_report = st.session_state.get(_cache_key)
+            if not _llm_report and _now - st.session_state.get(_fail_key, 0) >= 60:
+                # 仅缓存成功结果；失败进入 60s 冷却，避免每次交互重绘重复调用 API
+                with st.spinner("🤖 大语言模型正在生成决策报告..."):
+                    _llm_report = enhance_decision_report(
+                        _llm_params, result, reasoning=_build_reasoning_chain(result))
+                if _llm_report:
+                    st.session_state[_cache_key] = _llm_report
+                    st.session_state.pop(_fail_key, None)
+                else:
+                    st.session_state[_fail_key] = _now
             if _llm_report:
                 st.markdown(_llm_report)
                 st.caption("💡 本报告由大语言模型基于决策核算事实生成，仅引用已计算数据，不编造额外指标。")
             else:
-                st.info("LLM 决策报告未生成（未配置 API Key 或调用失败），已回退到规则模板。")
+                if not get_client().available:
+                    st.info("未配置 SCZC_LLM_API_KEY，已展示规则模板决策报告；配置 API Key 并重启应用后即可启用 LLM 报告润色。")
+                else:
+                    st.info("LLM 报告调用未成功（网络/服务异常，已自动重试），已回退规则模板；可稍后刷新重试，或查看终端日志定位原因。")
+                st.markdown(rule_template_report(result, _llm_params))
         except Exception as e:
             st.warning(f"LLM 报告生成出错: {e}")
 
@@ -1247,12 +1330,21 @@ else:
                     'precipitation': precipitation, 'sunshine': sunshine,
                     'carbon_price': carbon_price
                 }
-                _answer = answer_question(_user_question.strip(), _llm_params, result)
+                _q_key = f"llm_answer_{_fp}|{_user_question.strip()}"
+                _answer = st.session_state.get(_q_key)
+                if not _answer:
+                    _answer = answer_question(_user_question.strip(), _llm_params, result)
+                    if _answer:
+                        st.session_state[_q_key] = _answer
                 if _answer:
                     st.markdown(f"**答：** {_answer}")
                     st.caption("💡 回答仅引用本次决策核算事实，未提供的数据不会编造。")
                 else:
-                    st.info("LLM 问答未生成（未配置 API Key 或调用失败）。")
+                    if not get_client().available:
+                        st.info("未配置 SCZC_LLM_API_KEY，已展示规则兜底结论；配置 API Key 后即可开放问答。")
+                    else:
+                        st.info("LLM 问答未成功，已展示规则兜底结论；可稍后重试。")
+                    st.markdown(fallback_answer(_user_question.strip(), result))
             except Exception as e:
                 st.warning(f"LLM 问答出错: {e}")
 

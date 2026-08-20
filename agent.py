@@ -479,17 +479,9 @@ class SugarcaneAgent:
                 return answer, True
         except Exception:
             pass
-        # 规则兜底：给出可用事实与可答建议
-        opt = q_result['optimization']['optimal']
-        fallback = (
-            "我暂时无法调用语言模型来开放作答（未配置 LLM 服务或调用失败），"
-            "以下是本次决策的确定性结论，供你参考：\n\n"
-            f"- 最优方案：{opt['name']}，综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元\n"
-            f"- 净收益：{opt['net_benefit']:,.0f} 元，碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元\n\n"
-            "配置 SCZC_LLM_API_KEY 后可针对任意子方案、碳减排原理或副产物利用路径"
-            "进行开放问答。想问具体技术细节，请先配置语言模型接口。"
-        )
-        return fallback, False
+        # 规则兜底：统一文案（与 app.py / api.py 共用，保证三端输出一致可复核）
+        from llm_agent import fallback_answer as _fallback_answer
+        return _fallback_answer(question, q_result), False
 
     def _format_collected(self, collected: dict) -> str:
         """格式化已收集参数的可读字符串"""

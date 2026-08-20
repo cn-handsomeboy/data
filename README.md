@@ -192,9 +192,13 @@ project/
 ├── 参赛项目申报书_填写参考.md  ← 竞赛申报书
 ├── PPT_大纲.md          ← 答辩PPT大纲
 ├── 数据集来源说明.md     ← 数据溯源文档
-├── data/               ← 7个CSV数据集
+├── data/               ← 11个CSV/JSON数据集
 │   ├── guangxi_sugarcane.csv   ← 70行 (7市×10年)
 │   ├── weather_data.csv        ← 840行 (7市×10年×12月)
+│   ├── weather_data_expanded.csv ← 38353行 (2010-2024, ERA5扩充)
+│   ├── weather_data_asean.csv  ← 东盟四国逐月气象 (ERA5再分析)
+│   ├── asean_yield_weather.csv ← 东盟五国产-气象联合数据
+│   ├── asean_climate_normals.json ← 东盟气候基准值 (ERA5再分析)
 │   ├── fao_global.csv
 │   ├── ipcc_factors.csv        ← 23条 (AR6 GWP)
 │   ├── carbon_price.csv        ← 月度碳价 (2021-07至2026-07)

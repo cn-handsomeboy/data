@@ -26,6 +26,35 @@ from pydantic import BaseModel, Field
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(__file__))
+
+# 自动加载 .env（本地开发时从文件读取；Docker/云端由环境变量注入，不覆盖已存在的变量）。
+# 优先使用 python-dotenv；若未安装则用内置解析兜底，与 llm_agent.py 保持一致。
+def _load_env_file(env_path: str) -> None:
+    if not env_path or not os.path.exists(env_path):
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+        return
+    except Exception:
+        pass
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except Exception:
+        pass
+
+
+_load_env_file(os.path.join(os.path.dirname(__file__), ".env"))
+
 from models import SugarcaneDecisionSystem
 from data_security import (
     AuditLogger, DataMasker, DataIntegrityChecker,
@@ -211,6 +240,21 @@ class DecisionRequest(BaseModel):
         default=85.0, ge=0.0, le=10000.0,
         description="碳价（元/吨CO2），不传则使用近12月碳市场均价",
         examples=[85.0],
+    )
+    benefit_weight: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0,
+        description="收益权重（0-1），与碳减排权重联动自动归一化；缺省 0.7",
+        examples=[0.7],
+    )
+    carbon_weight: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0,
+        description="碳减排权重（0-1），与收益权重联动自动归一化；缺省 0.3",
+        examples=[0.3],
+    )
+    carbon_trading_scenario: str = Field(
+        default="energy_only",
+        description="碳交易情景：energy_only（当前政策，仅能源排放）| future_agriculture（未来情景，农业纳入）",
+        examples=["energy_only", "future_agriculture"],
     )
 
 
@@ -415,6 +459,9 @@ async def run_decision(
             carbon_price=request.carbon_price,
             country=validated_country,
             city=validated_city,
+            benefit_weight=request.benefit_weight,
+            carbon_weight=request.carbon_weight,
+            carbon_trading_scenario=request.carbon_trading_scenario,
         )
     except ValueError as e:
         # 业务校验失败（如参数越界）返回 400
@@ -501,6 +548,12 @@ async def run_decision(
             "total_score": round(opt["total_score"], 4),
         },
         "all_schemes": all_schemes,
+        "weights": {
+            "benefit": result["optimization"]["weights"]["benefit"],
+            "carbon": result["optimization"]["weights"]["carbon"],
+            "carbon_trading_scenario": result["optimization"].get(
+                "carbon_trading_scenario", request.carbon_trading_scenario),
+        },
     }
 
     # 获取模型指标（复用已有实例）
@@ -632,7 +685,19 @@ class AskRequest(BaseModel):
     avg_temp: float = Field(default=28.0, ge=10.0, le=45.0, description="生长季均温（℃）")
     precipitation: float = Field(default=900.0, ge=0.0, le=5000.0, description="生长季累计降水（mm）")
     sunshine: float = Field(default=870.0, ge=0.0, le=3000.0, description="生长季累计日照（h）")
-    carbon_price: float | None = Field(default=None, description="碳价（元/吨，缺省取市场均价）")
+    carbon_price: Optional[float] = Field(default=None, description="碳价（元/吨，缺省取市场均价）")
+    benefit_weight: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0,
+        description="收益权重（0-1），与碳减排权重联动自动归一化；缺省 0.7",
+    )
+    carbon_weight: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0,
+        description="碳减排权重（0-1），与收益权重联动自动归一化；缺省 0.3",
+    )
+    carbon_trading_scenario: str = Field(
+        default="energy_only",
+        description="碳交易情景：energy_only（当前政策）| future_agriculture（未来情景）",
+    )
 
 
 _DECISION_SCHEME_CN = {
@@ -676,6 +741,9 @@ async def run_report(
             carbon_price=request.carbon_price,
             country=validated_country,
             city=validated_city,
+            benefit_weight=request.benefit_weight,
+            carbon_weight=request.carbon_weight,
+            carbon_trading_scenario=request.carbon_trading_scenario,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -770,6 +838,9 @@ async def ask_question(
         "sunshine": request.sunshine,
         "carbon_price": (request.carbon_price if request.carbon_price is not None
                          else agent.default_carbon_price),
+        "benefit_weight": request.benefit_weight,
+        "carbon_weight": request.carbon_weight,
+        "carbon_trading_scenario": request.carbon_trading_scenario,
     }
     result = agent.system.run_decision(
         area_mu=params["area_mu"], avg_temp=params["avg_temp"],
@@ -779,6 +850,9 @@ async def ask_question(
         electricity_kwh=ELECTRICITY_PER_MU * params["area_mu"],
         carbon_price=params["carbon_price"],
         country=params["country"], city=params["city"],
+        benefit_weight=params["benefit_weight"],
+        carbon_weight=params["carbon_weight"],
+        carbon_trading_scenario=params["carbon_trading_scenario"],
     )
 
     if request.use_llm and llm_available:
@@ -797,16 +871,9 @@ async def ask_question(
         except Exception:
             pass
 
-    # 规则兜底
-    opt = result["optimization"]["optimal"]
-    fallback = (
-        "当前未启用语言模型服务（未配置 SCZC_LLM_API_KEY 或调用失败），"
-        "无法开放作答。为你提供本次决策的确定性结论：\n\n"
-        f"- 最优方案：{_DECISION_SCHEME_CN.get(opt['name'], opt['name'])}，"
-        f"综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元\n"
-        f"- 净收益：{opt['net_benefit']:,.0f} 元，碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元\n\n"
-        "配置 SCZC_LLM_API_KEY 后可对子方案、碳减排原理、副产物利用路径等进行开放问答。"
-    )
+    # 规则兜底：统一文案（与 app.py / agent.py 共用，保证三端输出一致可复核）
+    from llm_agent import fallback_answer as _fallback_answer
+    fallback = _fallback_answer(question, result)
     AuditLogger.log_api_access(
         endpoint="/api/ask", client_ip=client_ip, api_key=api_key,
         params={"city": validated_city, "country": validated_country, "llm": False},

@@ -769,10 +769,10 @@ def test_data_security_module():
 
     # 15.1 数据分类分级
     registry = DataClassifier.list_all()
-    assert len(registry) == 7, f"应有7个数据集，实际{len(registry)}"
+    assert len(registry) == 11, f"应有11个数据集，实际{len(registry)}"
     for item in registry:
         assert item['level'] in [1, 2, 3], f"{item['dataset']} 等级应为1-3"
-    print(f"[PASS] 15.1 数据分类分级: 7个数据集已分类")
+    print(f"[PASS] 15.1 数据分类分级: 11个数据集已分类")
 
     # 15.2 跨境合规检查
     public_ok = DataClassifier.check_cross_border_allowed("weather_data.csv", "Thailand")

@@ -27,19 +27,41 @@ llm_agent.py — 蔗循智策 大语言模型增强模块（可选扩展，非�
 import json
 import logging
 import os
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
 
-# 自动加载 .env 文件（本地开发时从文件读取，云端则由 Secrets 注入环境变量）
-try:
-    from dotenv import load_dotenv
-    _dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
-    if os.path.exists(_dotenv_path):
-        load_dotenv(_dotenv_path)
-except Exception:
-    pass
+# 自动加载 .env 文件（本地开发时从文件读取，云端则由 Secrets 注入环境变量）。
+# 优先使用 python-dotenv；若解释器未安装该库，则使用内置解析兜底，
+# 避免因缺包导致 API Key 未被加载而静默禁用 LLM 增强。
+def _load_env_file(env_path: str) -> None:
+    """将 .env 文件加载到进程环境变量（不覆盖已存在的变量）。"""
+    if not env_path or not os.path.exists(env_path):
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+        return
+    except Exception:
+        pass
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except Exception:
+        pass
+
+
+_load_env_file(os.path.join(os.path.dirname(__file__), ".env"))
 
 logger = logging.getLogger("llm_agent")
 
@@ -105,6 +127,20 @@ class _SlidingWindowRateLimiter:
             return True
 
 
+def _is_retryable_error(exc: Exception) -> bool:
+    """判断是否为可重试的瞬时错误（超时 / 网络中断 / 服务端 5xx）。
+
+    4xx（含 401 密钥无效、429 限流）与响应格式异常属于确定性错误，不重试。
+    """
+    if isinstance(exc, (TimeoutError, ConnectionError, socket.timeout)):
+        return True
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    if isinstance(exc, urllib.error.URLError):
+        return isinstance(exc.reason, (TimeoutError, ConnectionError, socket.timeout))
+    return False
+
+
 # ---------------------------------------------------------------------------
 # LLM 客户端（OpenAI 兼容）
 # ---------------------------------------------------------------------------
@@ -125,13 +161,28 @@ class LLMClient:
         return self.cfg.enabled
 
     def complete(self, messages, temperature=None, max_tokens=None) -> str:
-        """调用 chat/completions，返回文本内容。失败抛异常。"""
+        """调用 chat/completions，返回文本内容。失败抛异常。
+
+        对超时 / 网络中断 / 服务端 5xx 等瞬时错误自动重试 1 次
+        （限流额度只扣除一次）；其余错误（限流、鉴权失败、响应格式异常等）直接抛出。
+        """
         if not self.cfg.enabled:
             raise RuntimeError("LLM 未启用：未配置 SCZC_LLM_API_KEY")
 
         if not self._limiter.allow():
             raise RuntimeError("LLM 调用频率超限，请稍后再试")
 
+        try:
+            return self._post_once(messages, temperature, max_tokens)
+        except Exception as e:
+            if _is_retryable_error(e):
+                logger.warning("LLM 请求失败（%s），1.5s 后重试一次", e)
+                time.sleep(1.5)
+                return self._post_once(messages, temperature, max_tokens)
+            raise
+
+    def _post_once(self, messages, temperature=None, max_tokens=None) -> str:
+        """发送单次请求（不进行限流检查与重试）。"""
         payload = {
             "model": self.cfg.model,
             "messages": messages,
@@ -331,3 +382,43 @@ def answer_question(question: str, params: dict, result: dict,
     except Exception as e:
         logger.warning("自然语言问数 LLM 失败，回退规则模板: %s", e)
         return None
+
+
+# ---------------------------------------------------------------------------
+# 增强 3：规则模板兜底（LLM 不可用时三端共用，保证输出一致、数字可复核）
+# ---------------------------------------------------------------------------
+
+def rule_template_report(result: dict, params: dict) -> str:
+    """确定性规则模板决策报告（LLM 不可用时的兜底，所有数字来自核算结果）。"""
+    opt = result['optimization']['optimal']
+    trad = result['optimization']['all_schemes'][-1]
+    improve = (opt['net_benefit'] / max(abs(trad['net_benefit']), 1) - 1) * 100
+    ce = result['carbon_emission']
+    area = params.get('area_mu', result.get('area_mu', 0))
+    city = params.get('city', '')
+    return (
+        f"### 决策报告（规则引擎生成）\n\n"
+        f"基于 {city}{area:.0f} 亩蔗田的产量预测、碳排放核算与多目标优化结果，"
+        f"系统推荐采用 **{_SCHEME_CN.get(opt['name'], opt['name'])}**："
+        f"综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元，"
+        f"净收益 {opt['net_benefit']:,.0f} 元，较传统模式增收 **{improve:.0f}%**。\n\n"
+        f"**碳减排依据**：全链条碳排放 {ce['total_tons']:.2f} 吨CO₂e"
+        f"（种植 {ce['planting']:.0f} kg + 机械 {ce['mechanization']:.0f} kg + 加工 {ce['processing']:.0f} kg），"
+        f"碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元。\n\n"
+        f"**行动建议**：① 落实副产物循环利用路径（饲料化/有机肥/生物质颗粒/深加工）；"
+        f"② 关注碳价走势，适时参与碳普惠交易；"
+        f"③ 按监测参数建立台账，支撑 CCER 方法学申报与碳汇收益核算。"
+    )
+
+
+def fallback_answer(question: str, result: dict) -> str:
+    """问数场景的规则兜底回复（LLM 不可用时三端共用）。"""
+    opt = result['optimization']['optimal']
+    return (
+        "当前未启用语言模型服务（未配置 SCZC_LLM_API_KEY 或调用失败），"
+        "无法开放作答。为你提供本次决策的确定性结论：\n\n"
+        f"- 最优方案：{_SCHEME_CN.get(opt['name'], opt['name'])}，"
+        f"综合收益 {opt.get('total_benefit', opt['net_benefit']):,.0f} 元\n"
+        f"- 净收益：{opt['net_benefit']:,.0f} 元，碳交易收益 {opt.get('carbon_revenue', 0):+,.0f} 元\n\n"
+        "配置 SCZC_LLM_API_KEY 后可对子方案、碳减排原理、副产物利用路径等进行开放问答。"
+    )
