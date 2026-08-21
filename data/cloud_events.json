@@ -13,5 +13,10 @@
     "timestamp": "2026-08-21T12:54:53.221964",
     "session_id": "9229c454-11ad-4390-b3ec-b20de34e0162",
     "event": "page_view"
+  },
+  {
+    "timestamp": "2026-08-21T12:59:27.733434",
+    "session_id": "b17fca11-6784-4345-b078-75e6e8ed225d",
+    "event": "page_view"
   }
 ]
