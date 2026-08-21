@@ -3,5 +3,10 @@
     "timestamp": "2026-08-21T12:54:43.827171",
     "session_id": "aa7b1e88-169b-49df-8cb3-e2f870883f19",
     "event": "page_view"
+  },
+  {
+    "timestamp": "2026-08-21T12:54:47.775199",
+    "session_id": "8188036d-ddf7-47dd-b67e-d23fe03f9749",
+    "event": "page_view"
   }
 ]
