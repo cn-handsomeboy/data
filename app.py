@@ -102,6 +102,7 @@ st.set_page_config(
 try:
     import uuid as _uuid_mod
     from datetime import datetime as _dt_mod
+    from zoneinfo import ZoneInfo as _ZoneInfo
     from cloud_store import append_record as _cloud_append
     from cloud_store import read_json as _cloud_read
     from cloud_store import CLOUD_EVENTS_PATH as _CLOUD_EVENTS
@@ -121,7 +122,7 @@ if _uuid_mod is not None:
         st.session_state["_cloud_session_id"] = str(_uuid_mod.uuid4())
     if not st.session_state.get("_cloud_event_reported", False):
         _cloud_append(_CLOUD_EVENTS, {
-            "timestamp": _dt_mod.now().isoformat(),
+            "timestamp": _dt_mod.now(_ZoneInfo("Asia/Shanghai")).isoformat(),
             "session_id": st.session_state["_cloud_session_id"],
             "event": "page_view",
         })
