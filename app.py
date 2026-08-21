@@ -94,6 +94,40 @@ st.set_page_config(
 )
 
 # ============================================================
+# 云端访问埋点（GitHub 持久化，会话级去重）
+# 说明：Streamlit Cloud 实例为临时文件系统，本地写入重启即丢；
+# 本埋点将访问事件写入 GitHub 仓库 data/cloud_events.json，永久留存。
+# 未配置 GITHUB_TOKEN 或网络失败时静默跳过，不影响功能。
+# ============================================================
+try:
+    import uuid as _uuid_mod
+    from datetime import datetime as _dt_mod
+    from cloud_store import append_record as _cloud_append
+    from cloud_store import read_json as _cloud_read
+    from cloud_store import CLOUD_EVENTS_PATH as _CLOUD_EVENTS
+except Exception:
+    _uuid_mod = None
+
+    def _cloud_append(*_a, **_k):
+        return False
+
+    def _cloud_read(*_a, **_k):
+        return None
+
+    _CLOUD_EVENTS = "data/cloud_events.json"
+
+if _uuid_mod is not None:
+    if "_cloud_session_id" not in st.session_state:
+        st.session_state["_cloud_session_id"] = str(_uuid_mod.uuid4())
+    if not st.session_state.get("_cloud_event_reported", False):
+        _cloud_append(_CLOUD_EVENTS, {
+            "timestamp": _dt_mod.now().isoformat(),
+            "session_id": st.session_state["_cloud_session_id"],
+            "event": "page_view",
+        })
+        st.session_state["_cloud_event_reported"] = True
+
+# ============================================================
 # 专业配色
 # ============================================================
 C = {
@@ -760,9 +794,53 @@ if not st.session_state.get("run_flag", False):
             sc3.metric("完整性告警", f"{sec_s['integrity_tamper_alerts']} 次",
                        help="检测到数据文件被篡改的次数（安全监控自动上报）")
             st.caption(
-                f"⚠️ 此面板为**系统自验运行记录**，来源是本地/自建服务端 `logs/security_audit.log` 与 "
-                f"`data/user_feedback.json`，用于证明功能可用；**不代表云端真实用户访问量**。"
-                f"云端真实访问请以 Streamlit Cloud「App Analytics」的会话数/独立访客为准。"
+                f"此面板为**系统自验运行记录**，来源是本地/自建服务端 `logs/security_audit.log` 与 "
+                f"`data/user_feedback.json`，用于证明功能可用；不代表云端真实用户访问量。"
+                f"云端真实用户反馈与访问已持久化到 GitHub（`data/cloud_feedback.json` / `data/cloud_events.json`），"
+                f"见下方「云端访问统计」面板与「用户验证闭环」。"
+            )
+
+    # ============================================================
+    # 云端访问统计（GitHub 持久化的真实访问事件）
+    # ============================================================
+    with st.expander("📊 云端访问统计（真实用户 · GitHub 持久化）", expanded=False):
+        _ev = _cloud_read(_CLOUD_EVENTS)
+        if isinstance(_ev, list) and _ev:
+            _ev_df = pd.DataFrame(_ev)
+            _ev_df["ts"] = pd.to_datetime(_ev_df["timestamp"], errors="coerce")
+            _ev_df = _ev_df.dropna(subset=["ts"])
+            _ev_df["date"] = _ev_df["ts"].dt.date
+            _total_sessions = _ev_df["session_id"].nunique()
+            _total_events = len(_ev_df)
+            _last_time = _ev_df["ts"].max()
+            cv1, cv2, cv3, cv4 = st.columns(4)
+            cv1.metric("累计访问次数", f"{_total_events} 次",
+                       help="每次浏览器会话首次加载记 1 次，按会话去重")
+            cv2.metric("独立访客(会话)", f"{_total_sessions} 人",
+                       help="按 session_id 去重的独立访客数")
+            cv3.metric("最近访问", _last_time.strftime("%m-%d %H:%M"))
+            cv4.metric("数据留存", "GitHub 永久")
+            if len(_ev_df) >= 2:
+                _daily = _ev_df.groupby("date").agg(
+                    访问次数=("event", "size"),
+                    独立访客=("session_id", "nunique"),
+                ).reset_index()
+                _daily["date"] = _daily["date"].astype(str)
+                _fig = px.line(
+                    _daily, x="date", y=["访问次数", "独立访客"],
+                    markers=True, labels={"value": "次数", "variable": ""},
+                    title="每日访问趋势",
+                )
+                _fig.update_layout(legend_title_text="", height=320)
+                st.plotly_chart(_fig, use_container_width=True)
+            st.caption(
+                "数据来源：GitHub 仓库 `data/cloud_events.json`（应用自动上报，实例重启不丢失）。"
+                "可随时在仓库查看原始记录，作为线上真实访问凭证。"
+            )
+        else:
+            st.info(
+                "暂无云端访问记录。首次部署并配置 `GITHUB_TOKEN` 后，用户每次访问将自动记录，"
+                "数据持久化在 GitHub 仓库 `data/cloud_events.json`。"
             )
 
     # ============================================================

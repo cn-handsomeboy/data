@@ -23,6 +23,10 @@ Thumbs.db
 data/weather_data_backup.csv
 data/weather_data_phase1_backup.csv
 
+# Cloud persistence files (written exclusively via GitHub API from deployed app; local copy would conflict)
+data/cloud_feedback.json
+data/cloud_events.json
+
 # Virtual env
 venv/
 .venv/

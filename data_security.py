@@ -298,7 +298,13 @@ class DataIntegrityChecker:
         return hashlib.sha256(content).hexdigest()
 
     # 运行时/元数据文件不纳入完整性校验（内容会变化，导致误报）
-    _HASH_EXCLUDE = {'user_feedback.json', 'data_expansion_summary.json'}
+    _HASH_EXCLUDE = {
+        'user_feedback.json',
+        'data_expansion_summary.json',
+        # 云端持久化文件（GitHub API 独占写入，内容持续变化）
+        'cloud_feedback.json',
+        'cloud_events.json',
+    }
 
     @classmethod
     def record_hashes(cls, data_dir: Optional[str] = None) -> Dict[str, str]:

@@ -10,6 +10,19 @@ import os
 from datetime import datetime
 from typing import List
 
+# 云端持久化（GitHub 即存储）：未配置/失败时自动回退本地文件，不影响功能
+try:
+    from cloud_store import append_record as _cloud_append, read_json as _cloud_read
+    from cloud_store import CLOUD_FEEDBACK_PATH as _CLOUD_FB
+except Exception:
+    def _cloud_append(*_a, **_k):
+        return False
+
+    def _cloud_read(*_a, **_k):
+        return None
+
+    _CLOUD_FB = "data/cloud_feedback.json"
+
 
 # 数据目录（与 models.py 保持一致，避免循环导入）
 _DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
@@ -262,12 +275,23 @@ class FeedbackCollector:
         }
         feedbacks.append(fb)
         cls._save_feedbacks(feedbacks)
+        # 云端持久化（GitHub）：失败仅记日志，不影响本地主流程
+        _cloud_append(_CLOUD_FB, fb)
         return fb
 
     @classmethod
     def get_feedbacks(cls):
-        """获取所有反馈"""
-        return cls._load_feedbacks()
+        """获取所有反馈（本地 + 云端合并，按 id 去重，云端优先在前）"""
+        merged = {}
+        cloud = _cloud_read(_CLOUD_FB)
+        if isinstance(cloud, list):
+            for f in cloud:
+                if isinstance(f, dict) and f.get("id"):
+                    merged[f["id"]] = f
+        for f in cls._load_feedbacks():
+            if isinstance(f, dict) and f.get("id"):
+                merged[f["id"]] = f
+        return list(merged.values())
 
     @classmethod
     def get_validation_stats(cls):
