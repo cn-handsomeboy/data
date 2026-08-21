@@ -1,0 +1,9 @@
+[
+  {
+    "id": "TEST-FB-001",
+    "timestamp": "2026-08-21T20:40:05+08:00",
+    "city": "测试市",
+    "user_type": "测试",
+    "yield_error_pct": 3.5
+  }
+]
