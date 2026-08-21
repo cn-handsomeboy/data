@@ -8,7 +8,7 @@
   "ipcc_factors.csv": "9acc355f9304d24053f60f946c3b4762eafc8ea636364263002181471bd0f873",
   "market_prices.csv": "383924444935fd02c38f5c652eddc677168e1ceb8986e3a31a9023fd33a81c5b",
   "weather_data.csv": "79b20cf099abc4cb0ee3072e2fedcb96813e3d315ac63bc24618791e0621d2c0",
-  "weather_data_asean.csv": "6cc41ce22d64314ff62d44323475a0c55c6140a6bd40dcb5e9fa052962f5d738",
-  "weather_data_expanded.csv": "ca9bd4d0cb35a08fe891b719863ca07d60e5b22275c65f0aaf6b04e250707dfd",
-  "_version": 3
+  "weather_data_asean.csv": "f99b0d48d68194227ff9426b58c175a24483abfe2a7185fb167e740f39d0bb89",
+  "weather_data_expanded.csv": "51fbea0914cee002534182be7968fe424faf3e426ec74ba514087bb85fc1349f",
+  "_version": 4
 }

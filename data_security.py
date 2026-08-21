@@ -284,16 +284,18 @@ class DataIntegrityChecker:
     # 哈希记录版本：
     #   v2 修复跨平台换行符差异（CRLF vs LF）
     #   v3 哈希记录纳入Git版本控制，与数据文件同源提交，确保云端与本地一致
-    _HASH_VERSION = 3
+    #   v4 修复 compute_hash 分块归一化在 chunk 边界处拆散 CRLF 的 bug，改为整体归一化
+    _HASH_VERSION = 4
 
     @classmethod
     def compute_hash(cls, file_path: str) -> str:
-        """计算文件SHA-256哈希（归一化换行符，跨平台一致）"""
-        sha256 = hashlib.sha256()
+        """计算文件SHA-256哈希（整体归一化换行符，跨平台一致）"""
         with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                sha256.update(chunk.replace(b'\r\n', b'\n').replace(b'\r', b'\n'))
-        return sha256.hexdigest()
+            content = f.read()
+        # 一次性整体归一化：CRLF/CR → LF
+        # 注意：必须整体替换而非按块替换，否则 \r\n 跨越块边界时会被拆开处理导致哈希错误
+        content = content.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+        return hashlib.sha256(content).hexdigest()
 
     # 运行时/元数据文件不纳入完整性校验（内容会变化，导致误报）
     _HASH_EXCLUDE = {'user_feedback.json', 'data_expansion_summary.json'}

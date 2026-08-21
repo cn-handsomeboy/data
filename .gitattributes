@@ -1,0 +1,15 @@
+# 所有文本文件统一以 LF 换行符存储和检出（跨平台一致，避免 CRLF/LF 差异）
+* text=auto
+
+# 数据文件强制 LF（完整性校验基于 LF 归一化哈希）
+*.csv text eol=lf
+*.json text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+
+# 二进制文件不转换
+*.pkl binary
+*.jpg binary
+*.png binary
+*.ico binary
+*.hash binary
