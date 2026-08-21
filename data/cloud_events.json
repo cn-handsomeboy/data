@@ -33,5 +33,10 @@
     "timestamp": "2026-08-21T21:23:28.537447+08:00",
     "session_id": "9c4c0d87-9ee5-475e-9f42-8e0bcded11ae",
     "event": "page_view"
+  },
+  {
+    "timestamp": "2026-08-21T21:23:34.548055+08:00",
+    "session_id": "c9f37d82-0bb6-4bcf-8431-5567b2a8b4d2",
+    "event": "page_view"
   }
 ]
