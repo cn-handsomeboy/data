@@ -359,6 +359,8 @@ class YieldPredictor:
         best_model = model
 
         # ---- LOOCV 评估（无超参搜索，无信息泄漏）----
+        # 注意：标准化参数必须每折用训练子集重新拟合，否则验证样本会参与
+        # 均值/标准差的估计，导致与超参搜索泄漏同类型的"标准化泄漏"。
         loo = LeaveOneOut()
         y_true, y_pred = [], []
         for train_idx, test_idx in loo.split(X):
@@ -367,10 +369,15 @@ class YieldPredictor:
             y_tr = y.iloc[train_idx]
             y_te = y.iloc[test_idx]
 
+            # 每折在训练子集上独立标准化，验证子集只 transform（不参与 fit）
+            fold_scaler = StandardScaler()
+            X_tr_scaled = fold_scaler.fit_transform(X_tr)
+            X_te_scaled = fold_scaler.transform(X_te)
+
             # 每个 fold 用相同的固定超参重新训练
             fold_model = _safe_clone(best_model)
-            fold_model.fit(X_tr, y_tr)
-            y_pred.append(fold_model.predict(X_te)[0])
+            fold_model.fit(X_tr_scaled, y_tr)
+            y_pred.append(fold_model.predict(X_te_scaled)[0])
             y_true.append(y_te.values[0])
 
         mse = mean_squared_error(y_true, y_pred)
@@ -378,8 +385,11 @@ class YieldPredictor:
         mae = mean_absolute_error(y_true, y_pred)
         r2 = r2_score(y_true, y_pred)
 
-        # 最终在全量数据上训练（供线上预测使用）
-        best_model.fit(X, y)
+        # 最终在全量数据上训练（供线上预测使用）。
+        # 此处标准化用 train() 中已就绪的 self.scaler（全量拟合，
+        # 与预测阶段同源，属正常操作，无泄漏问题）。
+        X_global = self.scaler.transform(X)
+        best_model.fit(X_global, y)
 
         return {
             'model_name': model_name,
@@ -510,7 +520,7 @@ class YieldPredictor:
         if model_type == 'auto':
             results = []
             for name, m in candidates.items():
-                result = self._train_evaluate_model(m, X_final.copy(), y.copy(), name)
+                result = self._train_evaluate_model(m, X.copy(), y.copy(), name)
                 results.append(result)
 
             results.sort(key=lambda r: r['r2'], reverse=True)
@@ -534,7 +544,7 @@ class YieldPredictor:
             )
         else:
             model = candidates.get(model_type, candidates['ridge'])
-            result = self._train_evaluate_model(model, X_final.copy(), y.copy(), model_type)
+            result = self._train_evaluate_model(model, X.copy(), y.copy(), model_type)
             self.model = result['model']
             self._trained = True
             self._train_metrics = {
