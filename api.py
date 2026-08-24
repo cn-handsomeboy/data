@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(__file__))
 
-# 自动加载 .env（本地开发时从文件读取；Docker/云端由环境变量注入，不覆盖已存在的变量）。
+# 自动加载 .env（本地开发时从文件读取；云端由环境变量注入，不覆盖已存在的变量）。
 # 优先使用 python-dotenv；若未安装则用内置解析兜底，与 llm_agent.py 保持一致。
 def _load_env_file(env_path: str) -> None:
     if not env_path or not os.path.exists(env_path):
@@ -96,7 +96,7 @@ app = FastAPI(
 
 ## 数据产品特性
 
-- **产量预测**：GBRT LOOCV，R²=0.893，7市×10年训练数据
+- **产量预测**：GBRT LOOCV，R²=0.8416，7市×10年训练数据
 - **碳排放核算**：IPCC AR6 Tier 1，含N₂O 44/28转换，23条排放因子可溯源
 - **多目标优化**：经济收益70%+碳减排30%，五方案自动对比（传统/改良传统/基础循环/进阶循环/最优循环）
 - **跨境对比**：中国-泰国-越南-缅甸-老挝五国参数化决策
@@ -298,9 +298,9 @@ async def health_check():
 
 
 @app.get("/api/security/status", tags=["系统"])
-async def security_status():
+async def security_status(api_key: str = Depends(verify_api_key)):
     """
-    获取系统数据安全状态
+    获取系统数据安全状态（需鉴权，安全状态属于内部信息）
 
     返回数据完整性、分类分级、审计日志、跨境合规等安全体检结果。
     """
@@ -308,9 +308,9 @@ async def security_status():
 
 
 @app.post("/api/security/verify", tags=["系统"])
-async def verify_data_integrity():
+async def verify_data_integrity(api_key: str = Depends(verify_api_key)):
     """
-    手动触发数据完整性校验
+    手动触发数据完整性校验（需鉴权，防止未授权方探测数据完整性）
 
     重新计算所有数据文件SHA-256哈希，与记录值比对，检测篡改。
     """
@@ -323,7 +323,7 @@ async def verify_data_integrity():
 
 
 @app.get("/api/countries", tags=["数据产品"])
-async def list_countries():
+async def list_countries(api_key: str = Depends(verify_api_key)):
     """获取支持的国家/地区列表"""
     return {
         "countries": [
@@ -357,8 +357,8 @@ async def list_countries():
 
 
 @app.get("/api/datasets", tags=["数据产品"])
-async def list_datasets():
-    """获取系统使用的数据集信息"""
+async def list_datasets(api_key: str = Depends(verify_api_key)):
+    """获取系统使用的数据集信息（需鉴权，数据集来源与组成属于数据资产信息）"""
     return {
         "datasets": [
             {
@@ -387,7 +387,7 @@ async def list_datasets():
             {
                 "name": "weather_data",
                 "description": "广西7市逐月气象观测数据",
-                "source": "中国气象数据网",
+                "source": "Open-Meteo ERA5 再分析数据 + tianqi24.com 公开天气记录",
                 "years": "2015-2024",
                 "cities": ["崇左市", "来宾市", "南宁市", "柳州市", "百色市", "河池市", "防城港市"],
                 "type": "政府开放数据",
@@ -937,9 +937,9 @@ async def get_single_certificate(cert_type: str, api_key: str = Depends(verify_a
 
 
 @app.get("/api/lineage", tags=["数据要素"])
-async def get_data_lineage():
+async def get_data_lineage(api_key: str = Depends(verify_api_key)):
     """
-    获取数据血缘信息（无需鉴权，公开透明）
+    获取数据血缘信息（需鉴权）
 
     返回数据从原始采集到最终产品服务的完整流转链路。
     """
@@ -949,7 +949,7 @@ async def get_data_lineage():
 
 
 @app.get("/api/trading/scenarios", tags=["数据要素"])
-async def list_trading_scenarios():
+async def list_trading_scenarios(api_key: str = Depends(verify_api_key)):
     """获取数据交易场景列表"""
     from data_product import DataTradingSimulation
     return {"scenarios": DataTradingSimulation.get_scenarios()}
@@ -958,7 +958,8 @@ async def list_trading_scenarios():
 @app.get("/api/trading/simulate", tags=["数据要素"])
 async def simulate_trading(
     scenario_id: str,
-    months: int = Query(12, ge=1, le=120, description="模拟月数（1-120）")
+    months: int = Query(12, ge=1, le=120, description="模拟月数（1-120）"),
+    api_key: str = Depends(verify_api_key),
 ):
     """
     模拟数据交易流水

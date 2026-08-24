@@ -80,7 +80,7 @@ class DataClassifier:
     REGISTRY = {
         # 数据集名称: (分类, 脱敏策略, 来源)
         "guangxi_sugarcane.csv": (DataClassification.INTERNAL, "aggregation", "广西统计年鉴"),
-        "weather_data.csv": (DataClassification.PUBLIC, "none", "中国气象数据网"),
+        "weather_data.csv": (DataClassification.PUBLIC, "none", "Open-Meteo ERA5 再分析数据 + tianqi24.com 公开天气记录"),
         "fao_global.csv": (DataClassification.PUBLIC, "none", "FAOSTAT"),
         "ipcc_factors.csv": (DataClassification.PUBLIC, "none", "IPCC 2006"),
         "carbon_price.csv": (DataClassification.PUBLIC, "none", "上海环交所"),
@@ -304,6 +304,8 @@ class DataIntegrityChecker:
         # 云端持久化文件（GitHub API 独占写入，内容持续变化）
         'cloud_feedback.json',
         'cloud_events.json',
+        # 测试运行动态产物（每次运行测试都会覆盖，非静态数据文件）
+        'test_results.json',
     }
 
     @classmethod
@@ -351,15 +353,25 @@ class DataIntegrityChecker:
         with open(cls.HASH_RECORD, 'r', encoding='utf-8') as f:
             recorded = json.load(f)
 
-        # 版本不匹配（旧格式/跨平台换行符差异）→ 删除旧记录并重建
+        # 版本不匹配：不自动重建（防止以被篡改的磁盘状态作为新基线），报错并记录安全审计事件
         if recorded.get('_version') != cls._HASH_VERSION:
-            security_logger.info(f"哈希记录版本不匹配(v{recorded.get('_version', '?')}→v{cls._HASH_VERSION})，自动重建")
-            os.remove(cls.HASH_RECORD)
-            hashes = cls.record_hashes(data_dir)
+            rec_ver = recorded.get('_version', '?')
+            security_logger.error(
+                f"哈希记录版本不匹配(v{rec_ver}→v{cls._HASH_VERSION})，"
+                f"拒绝自动重建，请运行受控的 record_hashes() 升级"
+            )
+            AuditLogger.log_security_event(
+                event_type="integrity_version_mismatch",
+                severity="HIGH",
+                description=f"哈希记录版本不匹配(v{rec_ver}→v{cls._HASH_VERSION})，已拒绝自动重建",
+                details={"record_version": rec_ver, "expected_version": cls._HASH_VERSION},
+            )
             return {
-                "status": "ok",
-                "message": "哈希记录已升级重建",
-                "checked": len(hashes) - 1, "passed": len(hashes) - 1, "failed": [], "missing": []
+                "status": "error",
+                "message": f"哈希记录版本不匹配(v{rec_ver}→v{cls._HASH_VERSION})，拒绝自动重建，请运行受控的 record_hashes() 升级",
+                "checked": 0, "passed": 0,
+                "failed": [{"file": os.path.basename(cls.HASH_RECORD), "expected": f"v{cls._HASH_VERSION}", "actual": f"v{rec_ver}"}],
+                "missing": [],
             }
 
         # 移除版本标记键，只保留文件哈希
@@ -373,17 +385,26 @@ class DataIntegrityChecker:
             and not f.startswith('.')
             and f not in cls._HASH_EXCLUDE
         }
-        if set(recorded.keys()) != actual_files:
-            security_logger.info(
-                f"数据文件集合不一致(记录{len(recorded)}个 vs 磁盘{len(actual_files)}个)，自动重建"
+        # 文件集合不一致：不自动重建（防止以被篡改的磁盘状态作为新基线），报错并记录安全审计事件
+        missing_files = sorted(recorded.keys() - actual_files)
+        extra_files = sorted(actual_files - recorded.keys())
+        if missing_files or extra_files:
+            security_logger.error(
+                f"数据文件集合不一致(记录{len(recorded)}个 vs 磁盘{len(actual_files)}个)，"
+                f"拒绝自动重建；缺失={missing_files}, 新增={extra_files}"
             )
-            os.remove(cls.HASH_RECORD)
-            hashes = cls.record_hashes(data_dir)
+            AuditLogger.log_security_event(
+                event_type="integrity_file_set_mismatch",
+                severity="HIGH",
+                description="数据文件集合不一致，拒绝自动重建，请运行受控的 record_hashes() 更新基线",
+                details={"missing": missing_files, "extra": extra_files},
+            )
             return {
-                "status": "ok",
-                "message": "数据文件集合变更，哈希记录已重建",
-                "checked": len(hashes) - 1, "passed": len(hashes) - 1,
-                "failed": [], "missing": []
+                "status": "error",
+                "message": f"数据文件集合不一致(缺失 {missing_files}, 新增 {extra_files})，拒绝自动重建，请运行受控的 record_hashes() 更新基线",
+                "checked": 0, "passed": 0,
+                "failed": [{"file": os.path.basename(cls.HASH_RECORD), "expected": ",".join(recorded.keys()), "actual": ",".join(actual_files)}],
+                "missing": missing_files,
             }
 
         checked, passed, failed, missing = 0, 0, [], []
