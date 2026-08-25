@@ -128,5 +128,10 @@
     "timestamp": "2026-08-25T17:04:20.514840+08:00",
     "session_id": "34f905ce-de7e-4180-b18b-f682eb60154d",
     "event": "page_view"
+  },
+  {
+    "timestamp": "2026-08-25T17:04:26.426607+08:00",
+    "session_id": "da471eee-154c-4249-96b7-a285ae7ff60f",
+    "event": "page_view"
   }
 ]
