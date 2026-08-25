@@ -88,5 +88,10 @@
     "timestamp": "2026-08-25T15:45:14.077507+08:00",
     "session_id": "9e746b06-c60c-45e2-9fe2-45fc7cec0b5d",
     "event": "page_view"
+  },
+  {
+    "timestamp": "2026-08-25T15:45:30.342299+08:00",
+    "session_id": "705be82a-f35d-49b5-8349-ddde8407ce1c",
+    "event": "page_view"
   }
 ]
