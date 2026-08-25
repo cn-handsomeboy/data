@@ -21,7 +21,7 @@ except Exception:
     def _cloud_read(*_a, **_k):
         return None
 
-    _CLOUD_FB = "data/cloud_feedback.json"
+    _CLOUD_FB = "data/user_feedback.json"
 
 
 # 数据目录（与 models.py 保持一致，避免循环导入）

@@ -6,8 +6,9 @@
   "model": {
     "n_estimators": 100,
     "random_state": 42,
-    "test_size": 0.2,
-    "min_samples_for_training": 10
+    "min_samples_for_training": 10,
+    "validation": "LOOCV",
+    "_note": "训练评估统一使用 Leave-One-Out 交叉验证（无超参搜索泄漏），不使用 train/test 固定划分"
   },
   "optimization": {
     "benefit_weight": 0.7,

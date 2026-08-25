@@ -28,10 +28,12 @@ pip install -r requirements.txt
 ### 2.2 运行测试（验证环境）
 
 ```bash
-python test.py
+python test.py            # 全量测试（17组，93项断言）
+python test.py --model-type gbrt   # 指定模型类型测试
+python test.py --skip-save         # 仅运行测试，不生成 test_results.json
 ```
 
-预期输出：`17 tests passed`。
+预期输出：`[ALL PASS] 所有测试通过！`（退出码 0）。测试通过后自动生成 `data/test_results.json`（报告指标可复现依据）。
 
 ### 2.3 启动服务
 

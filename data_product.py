@@ -223,8 +223,8 @@ class DataProductCertification:
             "product_id": self.product_id,
             "issue_date": self.issue_date,
             "assessment_standard": "GB/T 37988-2019 信息安全技术 数据安全能力成熟度模型",
-            "security_level": "L2（一般数据）",
-            "data_classification": "公开数据聚合产品，不含个人隐私、不含国家秘密",
+            "security_level": "L2（内部数据，脱敏后对外）",
+            "data_classification": "内部数据聚合产品（GB/T 47949-2026 Lv.2），不含个人隐私、不含国家秘密，输出前经聚合脱敏",
             "measures": {
                 "input_validation": "API请求参数严格类型校验与范围限制（Pydantic模型）",
                 "access_control": "API Key鉴权；速率限制可通过 Nginx/云API网关扩展",

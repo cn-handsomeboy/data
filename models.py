@@ -499,9 +499,24 @@ class YieldPredictor:
         self.active_features = all_features
         X_final = pd.DataFrame(X_scaled_arr, columns=all_features, index=X.index)
 
+        # 记录扩展气候变量的训练均值，供 predict 时填充缺失输入。
+        # 原因：CITY_CLIMATE_NORMALS 中个别变量单位与训练聚合口径不一致
+        # （如 evapotranspiration 年累计 vs 生长季月均值），直接用会造成
+        # 预测特征离群、模型外推爆炸。改用训练均值可保证预测-训练口径一致。
+        self._ext_feature_means = {
+            col: float(merged[col].mean())
+            for col in ['humidity_pct', 'pressure_hpa', 'wind_speed_ms',
+                        'evapotranspiration_mm', 'soil_temp_c', 'soil_moisture_m3m3']
+            if col in merged.columns
+        }
+
         # 存储训练数据（bootstrap用）
         self._X_train = X_final.copy()
         self._y_train = y.copy()
+        # 存储训练年份范围：predict 时 year=None 默认取训练集最近年份，
+        # 避免超出训练区间的年份线性外推导致荒谬预测（Ridge 年份特征外推风险）
+        self._train_year_min = int(merged['year'].min())
+        self._train_year_max = int(merged['year'].max())
         self._city_area_from_training = {}
         for c in merged['city'].unique():
             recent = merged[merged['city'] == c].sort_values('year').tail(3)
@@ -615,6 +630,9 @@ class YieldPredictor:
                 '_train_yield_max': getattr(self, '_train_yield_max', None),
                 '_train_yield_q025': getattr(self, '_train_yield_q025', None),
                 '_train_yield_q975': getattr(self, '_train_yield_q975', None),
+                '_train_year_min': getattr(self, '_train_year_min', None),
+                '_train_year_max': getattr(self, '_train_year_max', None),
+                '_ext_feature_means': getattr(self, '_ext_feature_means', {}),
                 # 安全元数据：依赖版本与序列化格式版本
                 '_deps_version': {
                     'sklearn': sklearn.__version__,
@@ -721,6 +739,12 @@ class YieldPredictor:
                 self._train_yield_q025 = data['_train_yield_q025']
             if '_train_yield_q975' in data and data['_train_yield_q975'] is not None:
                 self._train_yield_q975 = data['_train_yield_q975']
+            if '_train_year_min' in data and data['_train_year_min'] is not None:
+                self._train_year_min = data['_train_year_min']
+            if '_train_year_max' in data and data['_train_year_max'] is not None:
+                self._train_year_max = data['_train_year_max']
+            if '_ext_feature_means' in data and data['_ext_feature_means']:
+                self._ext_feature_means = data['_ext_feature_means']
             # 加载后重建 SHAP explainer（需要训练数据）
             if HAS_SHAP and self.shap_summary is not None and self._X_train is not None:
                 try:
@@ -774,7 +798,9 @@ class YieldPredictor:
         }
         for c in self.CITY_DUMMIES:
             row[f'city_{c}'] = 1 if city == c else 0
-        row['year'] = float(year) if year is not None else float(datetime.now().year)
+        row['year'] = float(year) if year is not None else float(
+            getattr(self, '_train_year_max', datetime.now().year)
+        )
         if hasattr(self, '_city_area_from_training') and city in self._city_area_from_training:
             row['planting_area_wan_mu'] = self._city_area_from_training[city]
         else:
@@ -783,13 +809,17 @@ class YieldPredictor:
         row['avg_temp_c_x_precipitation_mm'] = row['avg_temp_c'] * row['precipitation_mm']
         row['avg_temp_c_x_sunshine_hours'] = row['avg_temp_c'] * row['sunshine_hours']
         row['precipitation_mm_x_sunshine_hours'] = row['precipitation_mm'] * row['sunshine_hours']
-        # 扩展气象变量：用户仅输入温度/降水/日照，其余 6 个变量按该市
-        # 生长季气候基准值自动填充（来源：Open-Meteo ERA5 2010-2024 再分析数据）。
+        # 扩展气象变量：用户仅输入温度/降水/日照，其余 6 个变量按训练均值自动填充。
         # 训练时这些列已进入特征集，预测时必须补齐，否则 DataFrame 选列会 KeyError。
+        # 优先用训练均值（口径与训练一致），无训练均值时回退到该市气候基准值。
+        ext_means = getattr(self, '_ext_feature_means', {})
         normals = CITY_CLIMATE_NORMALS.get(city, {})
         for feat in ['humidity_pct', 'pressure_hpa', 'wind_speed_ms',
                      'evapotranspiration_mm', 'soil_temp_c', 'soil_moisture_m3m3']:
-            row[feat] = normals.get(feat, 0.0)
+            if feat in ext_means:
+                row[feat] = ext_means[feat]
+            else:
+                row[feat] = normals.get(feat, 0.0)
         return row
 
     def predict(self, avg_temp, precipitation, sunshine, city='崇左市',
@@ -908,6 +938,13 @@ class YieldPredictor:
                     X_arr = X_pred.values
 
                 pred = float(m.predict(X_arr)[0])
+                # 与 predict() 保持一致的工程约束：bootstrap 预测也应用
+                # 训练数据分位数边界，避免离群 bootstrap 预测拉宽 CI 到荒谬区间
+                lo_c = getattr(self, '_train_yield_q025',
+                               getattr(self, '_train_yield_min', 3.0))
+                hi_c = getattr(self, '_train_yield_q975',
+                               getattr(self, '_train_yield_max', 7.0))
+                pred = max(lo_c, min(hi_c, pred))
                 predictions.append(pred)
             except Exception:
                 continue

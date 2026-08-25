@@ -364,7 +364,7 @@ async def list_datasets(api_key: str = Depends(verify_api_key)):
             {
                 "name": "guangxi_sugarcane",
                 "description": "广西7市甘蔗种植与产量数据",
-                "source": "广西统计年鉴",
+                "source": "广西各市统计公报+广西统计年鉴+广西地情网",
                 "years": "2015-2024",
                 "cities": ["崇左市", "来宾市", "南宁市", "柳州市", "百色市", "河池市", "防城港市"],
                 "type": "政府开放数据",

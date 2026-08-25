@@ -1,0 +1,231 @@
+{
+  "generated_at": "2026-08-25 15:03:26",
+  "model": "ridge",
+  "metrics": {
+    "r2": 0.9162,
+    "rmse": 0.2227,
+    "mae": 0.181,
+    "model_name": "ridge",
+    "loocv_samples": 70,
+    "fallback": false
+  },
+  "model_comparison": {
+    "ridge": {
+      "r2": 0.9162,
+      "rmse": 0.2227,
+      "mae": 0.181
+    },
+    "gbrt": {
+      "r2": 0.8661,
+      "rmse": 0.2815,
+      "mae": 0.2293
+    }
+  },
+  "stacking": null,
+  "decision": {
+    "area_mu": 10,
+    "yield_per_mu": 6.284225,
+    "yield_source": "model",
+    "yield_ci": {
+      "lower": 6.284225,
+      "upper": 6.284225,
+      "method": "bootstrap_200"
+    },
+    "total_yield": 62.84225,
+    "byproducts": {
+      "bagasse": {
+        "quantity": 15.082139999999999,
+        "coefficient": 0.24
+      },
+      "filter_mud": {
+        "quantity": 2.51369,
+        "coefficient": 0.04
+      },
+      "molasses": {
+        "quantity": 2.1994787500000004,
+        "coefficient": 0.035
+      },
+      "sugarcane_leaf": {
+        "quantity": 11.311605,
+        "coefficient": 0.18
+      },
+      "sugarcane_top": {
+        "quantity": 5.02738,
+        "coefficient": 0.08
+      }
+    },
+    "carbon_emission": {
+      "planting": 943.8000000000001,
+      "mechanization": 135.663,
+      "processing": 285.15000000000003,
+      "total_kg": 1364.6130000000003,
+      "total_tons": 1.3646130000000003
+    },
+    "economic": {
+      "bagasse": {
+        "quantity": 15.082139999999999,
+        "boiler_fuel": {
+          "revenue": 754.107,
+          "cost": 0.0
+        },
+        "pulp_paper": {
+          "revenue": 9803.391,
+          "cost": 1809.8567999999998
+        },
+        "plywood": {
+          "revenue": 7541.07,
+          "cost": 1508.214
+        },
+        "biogas": {
+          "revenue": 4222.999199999999,
+          "cost": 1206.5711999999999
+        },
+        "tableware": {
+          "revenue": 22623.21,
+          "cost": 12065.712
+        }
+      },
+      "filter_mud": {
+        "quantity": 2.51369,
+        "landfill": {
+          "revenue": -251.369,
+          "cost": 0.0
+        },
+        "organic_fertilizer": {
+          "revenue": 1005.476,
+          "cost": 377.0535
+        }
+      },
+      "molasses": {
+        "quantity": 2.1994787500000004,
+        "direct_sale": {
+          "revenue": 2199.47875,
+          "cost": 0.0
+        },
+        "deep_processed": {
+          "revenue": 4398.9575,
+          "cost": 1099.739375
+        }
+      },
+      "sugarcane_leaf": {
+        "quantity": 11.311605,
+        "burn": {
+          "revenue": 0.0,
+          "cost": 0.0
+        },
+        "biomass_pellet": {
+          "revenue": 4524.642,
+          "cost": 2262.321
+        },
+        "animal_feed": {
+          "revenue": 3619.7136,
+          "cost": 565.58025
+        }
+      },
+      "sugarcane_top": {
+        "quantity": 5.02738,
+        "burn": {
+          "revenue": 0.0,
+          "cost": 0.0
+        },
+        "animal_feed": {
+          "revenue": 1407.6664,
+          "cost": 251.369
+        }
+      }
+    },
+    "net_benefit": {
+      "traditional": 2702.21675,
+      "improved_traditional": 6912.6475,
+      "circular_basic": 10054.759999999998,
+      "circular_advanced": 15339.793225000001,
+      "circular_optimal": 17903.757025
+    },
+    "optimization": {
+      "optimal": {
+        "name": "circular_optimal",
+        "net_benefit": 17903.757025,
+        "total_benefit": 18431.071990497738,
+        "carbon_emission_kg": -15509.26369111,
+        "carbon_revenue": 527.31496549774,
+        "tradable_emission_kg": -6203.705476444,
+        "benefit_score": 1.0,
+        "carbon_score": 1.0,
+        "total_score": 1.0,
+        "landfill_ch4_kg": 0.0
+      },
+      "all_schemes": [
+        {
+          "name": "circular_optimal",
+          "net_benefit": 17903.757025,
+          "total_benefit": 18431.071990497738,
+          "carbon_emission_kg": -15509.26369111,
+          "carbon_revenue": 527.31496549774,
+          "tradable_emission_kg": -6203.705476444,
+          "benefit_score": 1.0,
+          "carbon_score": 1.0,
+          "total_score": 1.0,
+          "landfill_ch4_kg": 0.0
+        },
+        {
+          "name": "circular_advanced",
+          "net_benefit": 15339.793225000001,
+          "total_benefit": 15748.950461372177,
+          "carbon_emission_kg": -9627.229091109997,
+          "carbon_revenue": 409.1572363721749,
+          "tradable_emission_kg": -4813.614545554999,
+          "benefit_score": 0.8294776391469487,
+          "carbon_score": 0.8577362654091686,
+          "total_score": 0.8379552270256145,
+          "landfill_ch4_kg": 0.0
+        },
+        {
+          "name": "circular_basic",
+          "net_benefit": 10054.759999999998,
+          "total_benefit": 10209.508740239044,
+          "carbon_emission_kg": -3034.289024294999,
+          "carbon_revenue": 154.74874023904493,
+          "tradable_emission_kg": -1820.5734145769993,
+          "benefit_score": 0.4772942388655029,
+          "carbon_score": 0.698278468979575,
+          "total_score": 0.5435895078997245,
+          "landfill_ch4_kg": 0.0
+        },
+        {
+          "name": "improved_traditional",
+          "net_benefit": 6912.6475,
+          "total_benefit": 6505.64166428604,
+          "carbon_emission_kg": 5985.37993697,
+          "carbon_revenue": -407.00583571396,
+          "tradable_emission_kg": 4788.303949576,
+          "benefit_score": 0.24181193457062303,
+          "carbon_score": 0.48012745857875855,
+          "total_score": 0.31330659177306364,
+          "landfill_ch4_kg": 0.0
+        },
+        {
+          "name": "traditional",
+          "net_benefit": 2702.21675,
+          "total_benefit": 2702.21675,
+          "carbon_emission_kg": 25836.72386445,
+          "carbon_revenue": -0.0,
+          "tradable_emission_kg": 0.0,
+          "benefit_score": 0.0,
+          "carbon_score": 0.0,
+          "total_score": 0.0,
+          "landfill_ch4_kg": 1.3573925999999998
+        }
+      ],
+      "landfill_emission": {
+        "ch4_kg": 0.050273799999999993,
+        "co2_equivalent_kg": 1.3573925999999998
+      },
+      "weights": {
+        "benefit": 0.7,
+        "carbon": 0.3
+      },
+      "carbon_trading_scenario": "energy_only"
+    },
+    "scenario": "optimal"
+  }
+}

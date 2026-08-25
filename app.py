@@ -797,7 +797,7 @@ if not st.session_state.get("run_flag", False):
             st.caption(
                 f"此面板为**系统自验运行记录**，来源是本地/自建服务端 `logs/security_audit.log` 与 "
                 f"`data/user_feedback.json`，用于证明功能可用；不代表云端真实用户访问量。"
-                f"云端真实用户反馈与访问已持久化到 GitHub（`data/cloud_feedback.json` / `data/cloud_events.json`），"
+                f"云端真实用户反馈与访问已持久化到 GitHub（`data/user_feedback.json` / `data/cloud_events.json`），"
                 f"见下方「云端访问统计」面板与「用户验证闭环」。"
             )
 

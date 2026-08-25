@@ -79,7 +79,7 @@ class DataClassifier:
     # 本项目数据资产注册表
     REGISTRY = {
         # 数据集名称: (分类, 脱敏策略, 来源)
-        "guangxi_sugarcane.csv": (DataClassification.INTERNAL, "aggregation", "广西统计年鉴"),
+        "guangxi_sugarcane.csv": (DataClassification.INTERNAL, "aggregation", "广西各市统计公报+广西统计年鉴+广西地情网(2015-2024真实值,详见guangxi_sugarcane_source_notes.md)"),
         "weather_data.csv": (DataClassification.PUBLIC, "none", "Open-Meteo ERA5 再分析数据 + tianqi24.com 公开天气记录"),
         "fao_global.csv": (DataClassification.PUBLIC, "none", "FAOSTAT"),
         "ipcc_factors.csv": (DataClassification.PUBLIC, "none", "IPCC 2006"),
@@ -302,7 +302,6 @@ class DataIntegrityChecker:
         'user_feedback.json',
         'data_expansion_summary.json',
         # 云端持久化文件（GitHub API 独占写入，内容持续变化）
-        'cloud_feedback.json',
         'cloud_events.json',
         # 测试运行动态产物（每次运行测试都会覆盖，非静态数据文件）
         'test_results.json',
