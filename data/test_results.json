@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-25 15:03:26",
+  "generated_at": "2026-08-25 16:43:39",
   "model": "ridge",
   "metrics": {
     "r2": 0.9162,
@@ -27,9 +27,9 @@
     "yield_per_mu": 6.284225,
     "yield_source": "model",
     "yield_ci": {
-      "lower": 6.284225,
-      "upper": 6.284225,
-      "method": "bootstrap_200"
+      "lower": 5.847826886000686,
+      "upper": 6.720623113999315,
+      "method": "rmse_fallback_degraded"
     },
     "total_yield": 62.84225,
     "byproducts": {

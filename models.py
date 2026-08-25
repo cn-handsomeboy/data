@@ -954,10 +954,30 @@ class YieldPredictor:
                     'method': 'insufficient_bootstrap'}
 
         predictions = np.array(predictions)
+        ci_lower = float(np.percentile(predictions, 2.5))
+        ci_upper = float(np.percentile(predictions, 97.5))
+
+        # 退化检测:若 bootstrap 预测被分位数护栏压缩为单点(下界==上界),
+        # 区间已无信息量,回退到 RMSE-based 近似并如实标注,避免输出
+        # 名义上为 bootstrap 实则退化的假区间(曾出现 lower==upper 的情况)。
+        if ci_lower >= ci_upper:
+            sigma = 0.3
+            if self._train_metrics and not self._train_metrics.get('fallback'):
+                sigma = self._train_metrics.get('rmse', 0.3)
+            return {
+                'point': point,
+                'ci_lower': point - 1.96 * sigma,
+                'ci_upper': point + 1.96 * sigma,
+                'bootstrap_mean': float(np.mean(predictions)),
+                'bootstrap_std': float(np.std(predictions)),
+                'n_bootstrap': len(predictions),
+                'method': 'rmse_fallback_degraded'
+            }
+
         return {
             'point': point,
-            'ci_lower': float(np.percentile(predictions, 2.5)),
-            'ci_upper': float(np.percentile(predictions, 97.5)),
+            'ci_lower': ci_lower,
+            'ci_upper': ci_upper,
             'bootstrap_mean': float(np.mean(predictions)),
             'bootstrap_std': float(np.std(predictions)),
             'n_bootstrap': len(predictions),
@@ -1872,7 +1892,7 @@ class SugarcaneDecisionSystem:
                 yield_ci = {
                     'lower': ci_result['ci_lower'],
                     'upper': ci_result['ci_upper'],
-                    'method': 'bootstrap_200'
+                    'method': ci_result.get('method', 'bootstrap_200')
                 }
             except Exception:
                 pass
