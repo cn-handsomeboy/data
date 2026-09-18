@@ -263,5 +263,10 @@
     "timestamp": "2026-09-18T17:32:42.290924+08:00",
     "session_id": "912187f7-2434-447e-997f-03d0ab6ddd2a",
     "event": "page_view"
+  },
+  {
+    "timestamp": "2026-09-18T17:32:47.328584+08:00",
+    "session_id": "84e6ccbc-ad09-4f4b-8c90-591e20fa86c4",
+    "event": "page_view"
   }
 ]
